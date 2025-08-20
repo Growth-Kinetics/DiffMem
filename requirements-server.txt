@@ -1,0 +1,21 @@
+# DiffMem Server: FastAPI server dependencies
+# Extends base requirements.txt with web server dependencies
+
+# Include base requirements
+-r requirements.txt
+
+# FastAPI and web server
+fastapi
+uvicorn[standard]
+
+# Authentication and security
+pyjwt
+python-multipart
+
+# Background tasks and async support
+asyncio-mqtt
+aiofiles
+
+# Development and testing
+pytest-asyncio
+httpx

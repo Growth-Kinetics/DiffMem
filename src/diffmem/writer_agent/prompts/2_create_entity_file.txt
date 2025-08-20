@@ -1,0 +1,24 @@
+This is a memory creation task, similar to how the Anterior temporal lobe (ATL) integrates semantic knowledge about specific people, places, and things, in this session you are to create an Entity that will be used by the overall system to keep track of a given entity.
+
+The data for this entity will grow over time, following a non-linear path as multiple session transcripts are processed over time. This is the first time this entity is mentioned so the data will not be as comprehensive, but you are to plant the seed that will grow it
+
+Here is an example of an entity file that has evolved over multiple years:
+
+**Example of a well-structured, fleshed out entity file (`{example_file_name}`):**
+{example_content}
+
+You are to start the process with:
+
+**New Entity Details:**
+- Name: {entity_name}
+- Summary: {entity_summary}
+
+Using the information extraction from the following input:
+
+**Session Transcript (for context):**
+{memory_input}
+
+Generate the full Markdown content for the new file for "{entity_name}". Adhere strictly to the formatting of the example, including headers, block structures (### Header to /END), and strength tags.
+You do not need to build blocks in the exact same fashion as the example, adapt to the complexity of the entity you are creating, so that the final taxonomy you choose is optimal for future information retrieval, and can also be expanded as future information arrives.
+Do NOT assume information you don´t have, it is OK to make extrapolations based on the session and inferences from what is mentioned, but do not make up facts you don´t know with high degree of certainty.
+Respond ONLY with the raw Markdown content for the new file. Do not include any other text, explanations, or code fences.

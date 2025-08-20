@@ -1,0 +1,19 @@
+# DiffMem: Differential Memory Backend
+# Core dependencies for pip installation
+
+# Core search and indexing
+rank-bm25
+
+# HTTP requests for OpenRouter API
+requests
+
+# OpenAI client for OpenRouter compatibility
+openai
+
+# Git operations
+gitpython
+
+# Machine learning and semantic analysis
+sentence-transformers
+scikit-learn
+numpy

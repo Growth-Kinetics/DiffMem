@@ -1,0 +1,1 @@
+from diffmem.bm25_indexer.indexer import build_index, search

@@ -1,0 +1,69 @@
+[tool.poetry]
+name = "diffmem"
+version = "0.1.0"
+description = "DiffMem: Differential Memory Backend - Git-based memory library for personal augmentation systems"
+authors = ["Growth Kinetics <contact@growthkinetics.com>"]
+readme = "API_README.md"
+homepage = "https://github.com/growthkinetics/diffmem"
+repository = "https://github.com/growthkinetics/diffmem"
+documentation = "https://github.com/growthkinetics/diffmem/blob/main/API_README.md"
+keywords = ["memory", "ai", "git", "differential", "personal-augmentation", "bm25", "search"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+packages = [{include = "diffmem", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+# Core search and indexing
+rank-bm25 = "^0.2.2"
+# HTTP requests for OpenRouter API
+requests = "^2.31.0"
+# OpenAI client for OpenRouter compatibility
+openai = "^1.0.0"
+# Git operations
+gitpython = "^3.1.40"
+# Machine learning and semantic analysis
+sentence-transformers = "^2.2.2"
+scikit-learn = "^1.3.0"
+numpy = "^1.24.0"
+# FastAPI server dependencies (optional)
+fastapi = {version = "^0.104.0", optional = true}
+uvicorn = {version = "^0.24.0", optional = true, extras = ["standard"]}
+pyjwt = {version = "^2.8.0", optional = true}
+python-multipart = {version = "^0.0.6", optional = true}
+httpx = {version = "^0.25.0", optional = true}
+aiofiles = {version = "^23.2.0", optional = true}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+pytest-cov = "^4.1.0"
+black = "^23.0.0"
+isort = "^5.12.0"
+flake8 = "^6.0.0"
+mypy = "^1.5.0"
+pre-commit = "^3.4.0"
+
+[tool.poetry.group.docs.dependencies]
+mkdocs = "^1.5.0"
+mkdocs-material = "^9.2.0"
+mkdocstrings = "^0.22.0"
+
+[tool.poetry.extras]
+server = ["fastapi", "uvicorn", "pyjwt", "python-multipart", "httpx", "aiofiles"]
+
+[tool.poetry.scripts]
+diffmem = "diffmem.cli:main"
+diffmem-server = "diffmem.server:main"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

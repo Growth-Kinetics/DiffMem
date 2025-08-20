@@ -1,0 +1,52 @@
+This is a memory update task. 
+
+Similar to how the Hippocampus, Medial prefrontal cortex (mPFC), Posterior superior temporal sulcus (pSTS) & temporoparietal junction (TPJ) work together to update the "state" of our memories to reflect the current reality, your job is to evaluate how things have changed for this entity, and what new information have we gleaned that can be incorporated for future usage.
+
+You are to review the input and suggest precise updates for a specific memory file using search and replace operations. You can also suggest new blocks be created if so needed.
+
+
+**File to Update:** `{file_path_name}`
+
+**Current File Content:**
+```markdown
+{file_content}
+```
+
+---
+#Input for processing:
+```
+{memory_input}
+```
+---
+
+
+CRITICAL: You must identify updates using EXACT text matching with sufficient context. Each update should specify:
+1. A unique section of EXISTING text to find (including 2-3 lines of context)
+2. The REPLACEMENT text for that section
+
+Rules:
+- Include enough context in 'search_text' to uniquely identify the location
+- If adding new content, search for the section/header it should go under
+- Be smart about typos/misspellings (e.g., if "Kemichiro" appears but context suggests "Kenichiro", correct it)
+- For new sections, specify where to insert by identifying the preceding content, new sections should NEVER be created after the "semantic_index"
+
+Respond ONLY with a valid JSON object:
+```json
+{{
+  "updates": [
+    {{
+      "operation": "replace|append|insert_after",
+      "search_text": "exact text to find including context lines",
+      "replacement_text": "new text to replace with",
+      "section_hint": "optional: section name or header for context"
+    }}
+  ]
+}}
+```
+
+Operations:
+- "replace": Find and replace existing content
+- "append": Add to end of file
+- "insert_after": Insert new content after the search_text
+
+If no changes are needed, return: {{"updates": []}}

@@ -1,0 +1,43 @@
+Your objective in this instance is to evaluate any imputs and help identify entities for creating or editing.
+
+Entity kinds:
+- **people**   : individuals close to the user.  
+- **contexts** : organizations, places, themes, projects, emotional “attractors”, etc.  
+- **events**   : time-boxed milestones written as `YYYY-MM-DD_event-slug`, e.g. `2025-01-12_india_trip_start`.
+
+Rules in priority order
+1. Name stabilities: treat spelling variations of existing names as update of that same entity (≥80 % string similarity).  
+2. Create sparingly: propose NEW only if the entity is central (needs multi-field storage), it is mentioned multiple times in the input, and common knowledge about the topic won´t suffice – ignore passing brand names or throw-away objects.
+   For example, in a conversation Joe talks about kitkats, and how much he enjoys them, in this case you would NOT create a new entity for KitKats but allow the update system to append that information on Joe´s context. 
+   In another example, Joe is talking about kitkats, and how they are central to the branding strategy for his company, and specific information is shared about go to market strategy, project plans, etc. In this case an entity can be created for KitKat.
+3. Events: auto-generate presentation filename e.g. `2025-01-12_lunar_new_year_spark`.  
+4. Ignore core-context entries not mentioned.  
+5. If nothing actionable, return empty lists.
+
+Your JSON reply — valid, single-line summary in `summary`:
+```json
+{{
+  "entities_to_create": [
+    {{"name":"Marcella Astro","type":"people","summary":"Childhood friend re-emerging after ten years"}},
+    {{"name":"2025-04-20_crate_gig","type":"events","summary":"One-off acoustic fundraiser"}},
+    {{"name":"somatic_anxiety_toolkit","type":"contexts","summary":"Daily breath-hold exercises program"}}
+  ],
+  "entities_to_update": [
+    {{"name":"Benjamin Powell","file_path":"memories/people/benjamin_powell.md"}}
+  ]
+}}
+
+If no entities need creation or updates, return empty lists: {{"entities_to_create": [], "entities_to_update": []}}
+
+To determine if an entity is new or required editing, please refer to the folowing semantic index of all entities in this user's memory:
+---
+EXISTING ENTITIES SEMANTIC INDEX:
+{semantic_index}
+---
+
+Now, utilize your capabilities to extract entities from the following memory input:
+
+#Memory Input
+```
+{memory_input}
+```
