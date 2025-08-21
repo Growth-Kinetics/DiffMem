@@ -3,6 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![Prototype](https://img.shields.io/badge/status-prototype-orange.svg)](https://github.com/alexmrval/DiffMem)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Growth-Kinetics/DiffMem)
 
 DiffMem is a lightweight, git-based memory backend designed for AI agents and conversational systems. It uses Markdown files for human-readable storage, Git for tracking temporal evolution through differentials, and an in-memory BM25 index for fast, explainable retrieval. This project is a proof-of-concept (PoC) exploring how version control systems can serve as a foundation for efficient, scalable memory in AI applications.
 
