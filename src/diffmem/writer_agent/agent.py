@@ -554,12 +554,10 @@ Total entities: {len(index_entries)}
         modified_files = self._get_modified_files()
         if not modified_files:
             self.logger.info("No modified files to index.")
-            return
-        
-        self.logger.info(f"STEP 5: Building semantic indexes for {len(modified_files)} modified files...")
-        for file_path in modified_files:
-            self._build_entity_indexes(file_path)
-        
+        else:
+            self.logger.info(f"STEP 5: Building semantic indexes for {len(modified_files)} modified files...")
+            for file_path in modified_files:
+                self._build_entity_indexes(file_path)
         # Step 6: Rebuild master index
         self._rebuild_master_index()
         
