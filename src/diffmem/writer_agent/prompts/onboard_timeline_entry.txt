@@ -1,0 +1,35 @@
+You are creating the first timeline entry for a newly onboarded user ({user_id}). This entry should document the onboarding process and capture the initial state of the user's information as it was provided.
+
+This timeline entry serves as a historical marker of when the user's memory system was established and provides context for future entries.
+
+**Session Details:**
+- User ID: {user_id}
+- Session ID: {session_id}
+- Session Date: {session_date}
+
+**User Information Provided:**
+{user_info}
+
+**Timeline Entry Format:**
+Create a timeline entry that follows this structure:
+
+```
+#### {session_date} (Session: {session_id}) [Onboarding]
+**Event**: Initial onboarding and memory system setup for {user_id}. 
+**Topics**: [List 5-8 key topics/themes from the user information]
+**Entities Created**: [Brief mention of key entities that were created]
+**Context**: [2-3 sentence summary of the user's current life situation and what information was captured during onboarding]
+**Links**: [References to key files created, using format like [[{user_id}.md#section]]]
+/END {session_date}
+```
+
+**Guidelines:**
+1. Keep the tone factual and professional
+2. Focus on what was captured rather than personal details
+3. The "Topics" should reflect the main themes from the user information
+4. "Context" should provide a high-level summary of the user's current situation
+5. "Links" should reference the main user file and any significant entities created
+
+Generate the complete timeline entry content following the format above.
+
+Respond ONLY with the raw Markdown timeline entry content. 

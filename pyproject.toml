@@ -3,10 +3,8 @@ name = "diffmem"
 version = "0.1.0"
 description = "DiffMem: Differential Memory Backend - Git-based memory library for personal augmentation systems"
 authors = ["Growth Kinetics <contact@growthkinetics.com>"]
-readme = "API_README.md"
 homepage = "https://github.com/growthkinetics/diffmem"
 repository = "https://github.com/growthkinetics/diffmem"
-documentation = "https://github.com/growthkinetics/diffmem/blob/main/API_README.md"
 keywords = ["memory", "ai", "git", "differential", "personal-augmentation", "bm25", "search"]
 classifiers = [
     "Development Status :: 3 - Alpha",

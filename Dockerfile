@@ -23,8 +23,13 @@ COPY pyproject.toml ./
 # Install the package in development mode
 RUN pip install -e .
 
-# Create directory for repository
-RUN mkdir -p /app/memory_repo
+# Create directory for repository and initialize empty git repo
+RUN mkdir -p /app/memory_repo && \
+    git config --global user.name "DiffMem" && \
+    git config --global user.email "diffmem@system.local" && \
+    git config --global init.defaultBranch main && \
+    git config --global credential.helper "" && \
+    git config --global http.postBuffer 524288000
 
 # Expose port
 EXPOSE 8000
@@ -39,4 +44,4 @@ ENV REPO_PATH=/app/memory_repo
 ENV SYNC_INTERVAL_MINUTES=5
 
 # Run the server
-CMD ["uvicorn", "diffmem.server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"] 
+CMD ["sh", "-c", "uvicorn diffmem.server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

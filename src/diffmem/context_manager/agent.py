@@ -124,9 +124,21 @@ class SemanticEntityScorer:
             
             # Recency boost  
             if 'last_update' in entity:  
-                days_ago = (datetime.now() - datetime.fromisoformat(entity['last_update'].replace(' +0200', ''))).days  
-                recency_factor = max(0.7, 1 - (days_ago / 365))  
-                adjusted_score *= recency_factor  
+                try:
+                    # Parse the entity's last_update datetime
+                    last_update_str = entity['last_update']
+                    # Remove timezone info if present to make it naive
+                    last_update_str = re.sub(r'\s*[+-]\d{4}$', '', last_update_str)
+                    last_update_dt = datetime.fromisoformat(last_update_str)
+                    
+                    # Calculate days difference using naive datetimes
+                    days_ago = (datetime.now() - last_update_dt).days  
+                    recency_factor = max(0.7, 1 - (days_ago / 365))  
+                    adjusted_score *= recency_factor
+                except (ValueError, TypeError) as e:
+                    # If datetime parsing fails, skip recency boost
+                    logger.debug(f"Failed to parse last_update for entity: {entity.get('name', 'unknown')}, error: {e}")
+                    pass  
             
             scored_entities.append({  
                 'entity': entity,  

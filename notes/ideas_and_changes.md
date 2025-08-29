@@ -1,4 +1,5 @@
 Module:
+- Split repos so that it is one repo per user.
 - Verify that all agents have only access to the user's folder and put in checks to prevent accessing other folders.
 - Clean up call_llm so that it shunted to a util and called more sensibly.
 - Fix that when an index is not found it makes it but doesn´t immediately load it in same process.

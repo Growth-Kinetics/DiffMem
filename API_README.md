@@ -1,414 +1,296 @@
 # DiffMem API Documentation
 
-A module-driven interface for differential memory operations. No servers or endpoints required - import directly into your chat agent.
+This document describes the API interface for DiffMem, a git-based differential memory system for AI agents.
 
 ## Quick Start
 
+### For New Users (Onboarding)
+
+If you're setting up DiffMem for a completely new user, you'll need to onboard them first:
+
 ```python
-from diffmem import DiffMemory
+from diffmem.api import onboard_new_user
 
-# Initialize for a user
-memory = DiffMemory("/path/to/repo", "alex", "your-openrouter-key")
+# Onboard a new user with their information
+user_info = """
+John is a 32-year-old software engineer living in San Francisco.
+He works at TechCorp and is married to Sarah. They have a daughter Emma.
+John enjoys rock climbing and reading science fiction novels.
+"""
 
-# Read operations
-conversation = [{"role": "user", "content": "How has my relationship with mom evolved?"}]
-context = memory.get_context(conversation, depth="basic")
+result = onboard_new_user(
+    repo_path="/path/to/memory/repo",
+    user_id="john_doe", 
+    user_info=user_info,
+    openrouter_api_key="your-key-here"
+)
 
-# Write operations
-memory.process_session("Had coffee with mom today...", "session-123")
-memory.commit_session("session-123")
+if result['success']:
+    print(f"User onboarded! Created {result['entities_created']} entities")
+else:
+    print(f"Onboarding failed: {result['error']}")
 ```
 
-## Installation
+### For Existing Users
 
-Ensure you have the DiffMem package installed and your memory repository set up according to the `repo_guide.md`.
+```python
+from diffmem.api import create_memory_interface
 
-Required environment variable:
-```bash
-export OPENROUTER_API_KEY="your-openrouter-api-key"
+# Create memory interface for existing user
+memory = create_memory_interface(
+    repo_path="/path/to/memory/repo",
+    user_id="john_doe",
+    openrouter_api_key="your-key-here"
+)
+
+# Check if user is properly onboarded
+if not memory.is_onboarded():
+    print("User needs to be onboarded first!")
+    # Use onboard_new_user() or memory.onboard_user()
 ```
 
-## Core Classes
+## Core API Classes
 
 ### DiffMemory
 
-Main interface for all memory operations.
+The main interface for memory operations.
 
-#### Initialization
+#### Constructor
 
 ```python
-DiffMemory(repo_path: str, user_id: str, openrouter_api_key: str, model: str = "google/gemini-2.5-pro")
+DiffMemory(repo_path, user_id, openrouter_api_key, model="google/gemini-2.5-pro", auto_onboard=False)
 ```
 
-- `repo_path`: Path to your git repository containing memory files
-- `user_id`: User identifier (must exist in `users/` directory)
-- `openrouter_api_key`: Your OpenRouter API key
-- `model`: Default LLM model for operations
+- `repo_path`: Path to git repository containing memory files
+- `user_id`: User identifier (must exist in `users/` directory unless auto_onboard=True)
+- `openrouter_api_key`: API key for OpenRouter LLM access
+- `model`: Default model for LLM operations
+- `auto_onboard`: If True, allows initialization even if user doesn't exist yet
 
-## Read Operations
-
-### get_context(conversation, depth="basic")
-
-Assembles context for a conversation based on memory retrieval.
-
-**Depth modes:**
-- `"basic"`: Top entities with ALWAYS_LOAD blocks only
-- `"wide"`: Semantic search with ALWAYS_LOAD blocks  
-- `"deep"`: Complete entity files
-- `"temporal"`: Complete files with Git blame history
+#### Onboarding Methods
 
 ```python
-conversation = [
-    {"role": "user", "content": "Tell me about my goals"},
-    {"role": "assistant", "content": "Let me check your memories..."}
-]
+# Check if user is onboarded
+is_onboarded = memory.is_onboarded()
 
-# Basic context (fastest)
-basic_context = memory.get_context(conversation, depth="basic")
-
-# Deep context (complete entity files)
-deep_context = memory.get_context(conversation, depth="deep")
-
-# Temporal context (with git history)
-temporal_context = memory.get_context(conversation, depth="temporal")
+# Onboard a user (if not already onboarded)
+result = memory.onboard_user(user_info, session_id="optional-id")
 ```
 
-**Returns:**
+#### Read Operations
+
 ```python
-{
-    'always_load_blocks': [...],     # Core memory blocks
-    'recent_timeline': [...],        # Recent timeline entries  
-    'session_metadata': {...},       # Assembly metadata
-    'complete_entities': [...],      # Full entities (deep/temporal)
-    'temporal_blame': [...]          # Git history (temporal only)
-}
+# Get context for a conversation
+context = memory.get_context(conversation, depth="basic")
+# depth options: "basic", "wide", "deep", "temporal"
+
+# Direct BM25 search
+results = memory.search("relationship dynamics", k=5)
+
+# LLM-orchestrated search
+results = memory.orchestrated_search(conversation, k=5)
+
+# Get user entity file
+user_entity = memory.get_user_entity()
+
+# Get recent timeline
+timeline = memory.get_recent_timeline(days_back=30)
 ```
 
-### search(query, k=5)
-
-Direct BM25 search over memory blocks.
+#### Write Operations
 
 ```python
-results = memory.search("family dynamics", k=3)
-for result in results:
-    print(f"Score: {result['score']:.3f}")
-    print(f"Content: {result['snippet']['content'][:100]}...")
-```
+# Process a session (stages changes, doesn't commit)
+memory.process_session(
+    memory_input="Had coffee with mom today...", 
+    session_id="session-123",
+    session_date="2024-01-15"  # optional, defaults to today
+)
 
-### orchestrated_search(conversation, model=None, k=5)
+# Commit staged changes
+memory.commit_session("session-123")
 
-LLM-guided search that derives queries from conversation context.
-
-```python
-orchestrated = memory.orchestrated_search(conversation)
-print(f"Derived query: {orchestrated['derived_query']}")
-print(f"Response: {orchestrated['response']}")
-```
-
-### get_user_entity()
-
-Returns the complete user entity file.
-
-```python
-user_data = memory.get_user_entity()
-print(f"User: {user_data['entity_name']}")
-```
-
-### get_recent_timeline(days_back=30)
-
-Gets recent timeline entries.
-
-```python
-recent = memory.get_recent_timeline(days_back=7)
-print(f"Found {len(recent)} entries from last week")
-```
-
-## Write Operations
-
-### process_session(memory_input, session_id, session_date=None)
-
-Processes session content and stages changes (doesn't commit).
-
-```python
-session_transcript = """
-Had a great conversation with mom today. She told me about her 
-childhood and seemed more relaxed than usual. Our relationship 
-is definitely improving.
-"""
-
-memory.process_session(session_transcript, "session-2024-01-15-001")
-```
-
-**What it does:**
-1. Identifies entities mentioned in the input
-2. Creates new entity files if needed
-3. Updates existing entity files
-4. Creates timeline entries
-5. Rebuilds semantic indexes
-6. Stages all changes in git
-
-### commit_session(session_id)
-
-Commits all staged changes for a session.
-
-```python
-memory.commit_session("session-2024-01-15-001")
-```
-
-### process_and_commit_session(memory_input, session_id, session_date=None)
-
-Convenience method that processes and immediately commits.
-
-```python
+# Process and commit in one step
 memory.process_and_commit_session(
-    "Today I learned that mom is taking painting classes...",
-    "session-123"
+    memory_input="Had coffee with mom today...",
+    session_id="session-123"
 )
 ```
 
-## Utility Operations
-
-### get_repo_status()
-
-Returns repository statistics and status.
+#### Utility Operations
 
 ```python
+# Get repository status
 status = memory.get_repo_status()
-print(f"Memory files: {status['memory_files_count']}")
-print(f"Index blocks: {status['index_stats']['total_blocks']}")
-```
 
-### validate_setup()
-
-Validates that the memory repository is correctly configured.
-
-```python
+# Validate setup
 validation = memory.validate_setup()
-if not validation['valid']:
-    print("Issues found:", validation['issues'])
-if validation['warnings']:
-    print("Warnings:", validation['warnings'])
+
+# Rebuild search index
+memory.rebuild_index()
 ```
 
-### rebuild_index()
+## Server API Endpoints
 
-Forces a rebuild of the BM25 search index.
+If you're running the DiffMem server, you can use these HTTP endpoints:
 
-```python
-memory.rebuild_index()  # Called automatically after write operations
+### Onboarding Endpoints
+
+#### POST `/memory/{user_id}/onboard`
+
+Onboard a new user to the memory system.
+
+**Request Body:**
+```json
+{
+    "user_info": "Raw information dump about the user...",
+    "session_id": "optional-session-id"
+}
 ```
+
+**Response:**
+```json
+{
+    "status": "success",
+    "message": "User john_doe successfully onboarded",
+    "result": {
+        "success": true,
+        "user_id": "john_doe",
+        "session_id": "onboard-20241201-143022",
+        "entities_created": 5,
+        "files_created": {
+            "user_file": "/path/to/users/john_doe/john_doe.md",
+            "entities": ["Sarah", "TechCorp", "Emma", "Dr. Martinez", "Mission District"],
+            "timeline": "2024-12.md",
+            "master_index": "index.md"
+        }
+    }
+}
+```
+
+#### GET `/memory/{user_id}/onboard-status`
+
+Check if a user is onboarded.
+
+**Response:**
+```json
+{
+    "status": "success",
+    "user_id": "john_doe",
+    "onboarded": true,
+    "message": "User john_doe is onboarded"
+}
+```
+
+### Memory Operations
+
+#### POST `/memory/{user_id}/context`
+
+Get assembled context for a conversation.
+
+#### POST `/memory/{user_id}/search`
+
+Search memory using BM25.
+
+#### POST `/memory/{user_id}/process-and-commit`
+
+Process and commit a session in one step.
+
+#### GET `/memory/{user_id}/status`
+
+Get repository status (works for both onboarded and non-onboarded users).
+
+#### GET `/memory/{user_id}/validate`
+
+Validate memory setup (works for both onboarded and non-onboarded users).
 
 ## Convenience Functions
 
-### create_memory_interface(repo_path, user_id, openrouter_api_key=None, model="anthropic/claude-3-haiku")
-
-Creates a DiffMemory instance with optional environment variable fallback for API key.
-
 ```python
-from diffmem import create_memory_interface
+from diffmem.api import create_memory_interface, onboard_new_user, quick_search
 
-# Uses OPENROUTER_API_KEY environment variable
-memory = create_memory_interface("/path/to/repo", "alex")
+# Create memory interface with auto-onboard capability
+memory = create_memory_interface(
+    repo_path="/path/to/repo",
+    user_id="john_doe",
+    auto_onboard=True  # Allows initialization even if user doesn't exist
+)
 
-# Or provide key explicitly  
-memory = create_memory_interface("/path/to/repo", "alex", "your-key")
-```
+# Onboard a completely new user
+result = onboard_new_user(
+    repo_path="/path/to/repo",
+    user_id="jane_doe", 
+    user_info="Jane is a data scientist...",
+    session_id="onboard-001"
+)
 
-### quick_search(repo_path, query, k=5)
-
-Performs a search without full initialization (index-only).
-
-```python
-from diffmem import quick_search
-
-results = quick_search("/path/to/repo", "work stress", k=3)
-```
-
-## Integration Examples
-
-### Simple Chat Agent
-
-```python
-from diffmem import create_memory_interface
-
-class ChatAgent:
-    def __init__(self, repo_path: str, user_id: str):
-        self.memory = create_memory_interface(repo_path, user_id)
-        self.conversation = []
-    
-    def process_message(self, user_message: str) -> str:
-        self.conversation.append({"role": "user", "content": user_message})
-        
-        # Get relevant context
-        context = self.memory.get_context(self.conversation[-5:], depth="basic")
-        
-        # Generate response using context (your LLM logic here)
-        response = self.generate_response(context, user_message)
-        
-        self.conversation.append({"role": "assistant", "content": response})
-        return response
-    
-    def end_session(self, session_id: str):
-        # Save conversation to memory
-        full_transcript = "\n".join([
-            f"{msg['role']}: {msg['content']}" for msg in self.conversation
-        ])
-        self.memory.process_and_commit_session(full_transcript, session_id)
-```
-
-### Memory-Aware Assistant
-
-```python
-class MemoryAssistant:
-    def __init__(self, repo_path: str, user_id: str):
-        self.memory = create_memory_interface(repo_path, user_id)
-    
-    def recall_memories(self, query: str) -> str:
-        """Search memories and return formatted results"""
-        results = self.memory.search(query, k=5)
-        
-        if not results:
-            return "I don't have any memories matching that query."
-        
-        formatted = "Here's what I remember:\n\n"
-        for i, result in enumerate(results, 1):
-            content = result['snippet']['content'][:200] + "..."
-            formatted += f"{i}. {content}\n\n"
-        
-        return formatted
-    
-    def update_memory(self, experience: str) -> str:
-        """Add new experience to memory"""
-        session_id = f"update-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-        
-        try:
-            self.memory.process_and_commit_session(experience, session_id)
-            return f"Memory updated successfully (session: {session_id})"
-        except Exception as e:
-            return f"Failed to update memory: {str(e)}"
+# Quick search without full initialization
+results = quick_search("/path/to/repo", "machine learning")
 ```
 
 ## Error Handling
 
-The API raises standard Python exceptions:
+The system provides clear error messages for common issues:
 
-- `FileNotFoundError`: Repository or user paths don't exist
-- `ValueError`: Invalid parameters (e.g., missing API key)
-- `Exception`: LLM or git operation failures
+### User Not Onboarded
+
+If you try to use memory operations on a user who hasn't been onboarded:
 
 ```python
+# This will raise ValueError
 try:
-    memory = DiffMemory("/path/to/repo", "alex", "api-key")
     context = memory.get_context(conversation)
-except FileNotFoundError as e:
-    print(f"Repository setup issue: {e}")
 except ValueError as e:
-    print(f"Configuration error: {e}")
-except Exception as e:
-    print(f"Operation failed: {e}")
+    print(f"Error: {e}")
+    # Error: User john_doe has not been onboarded. Call onboard_user() first.
 ```
 
-## Performance Notes
+### User Already Onboarded
 
-- **Index Rebuilding**: Automatically triggered after write operations
-- **Lazy Loading**: Components are initialized only when first used
-- **Memory Usage**: BM25 index is kept in memory for fast searches
-- **Git Operations**: All writes are staged before commit for atomicity
+If you try to onboard a user who already exists:
 
-## Supported Models
-
-Config is set up for calling LLMs through openrouter. 
-
+```python
+result = memory.onboard_user(user_info)
+if not result['success']:
+    print(result['error'])
+    # Error: User john_doe is already onboarded
+```
 
 ## Repository Structure
 
-Your memory repository should follow this structure:
+After onboarding, the repository will have this structure:
 
 ```
 repo/
 ├── users/
-│   └── alex/
-│       ├── alex.md              # User entity file
-│       ├── index.md             # Master index (auto-generated)
+│   └── john_doe/
+│       ├── john_doe.md          # Main user entity file
+│       ├── index.md             # Master index of all entities
 │       ├── memories/
 │       │   ├── people/          # Person entities
-│       │   ├── contexts/        # Context entities  
-│       │   └── events/          # Event entities
-│       └── timeline/            # Timeline entries
-│           ├── 2024-01.md
-│           └── 2024-02.md
-└── repo_guide.md               # Repository documentation
+│       │   │   ├── sarah.md
+│       │   │   └── emma.md
+│       │   └── contexts/        # Organization, place, concept entities
+│       │       ├── techcorp.md
+│       │       └── mission_district.md
+│       └── timeline/
+│           └── 2024-12.md       # Monthly timeline entries
+└── .git/                        # Git repository
 ```
 
-See `repo_guide.md` for detailed setup instructions.
+## Examples
 
-## Complete Example
+See `examples/onboarding_example.py` for a complete demonstration of the onboarding functionality using both the API interface and server endpoints.
+
+## Migration from Pre-Onboarding Versions
+
+If you have an existing DiffMem setup without onboarding, your existing users should continue to work normally. The new onboarding system is designed to be backward compatible.
+
+To check if a user needs onboarding:
 
 ```python
-#!/usr/bin/env python3
-import os
-from diffmem import DiffMemory
-import json 
-
-# Setup
-REPO_PATH = "/path/to/memory/repo" 
-USER_ID = "alex"
-API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-def main():
-    # Initialize
-    memory = DiffMemory(REPO_PATH, USER_ID, API_KEY)
-    
-    # Validate setup
-    validation = memory.validate_setup()
-    if not validation['valid']:
-        print(f"Setup issues: {validation['issues']}")
-        return
-    
-    # Example conversation
-    conversation = [
-        {"role": "user", "content": "How am I doing with my health goals?"}
-    ]
-    
-    # Get context (loads user entity plus 5 highest ranked indexes)
-    context = memory.get_context(conversation, depth="basic")
- 
-    # Get wide context (loads user entity plus summary from relevant entities)
-    context = memory.get_context(conversation, depth="wide")
-
-    # Get deep context  (loads user entity plus full relevant entities)
-    context = memory.get_context(conversation, depth="deep")
-
-    # Get temporal context  (loads user entity plus full relevant entities along with git blame)
-    context = memory.get_context(conversation, depth="temporal")
-
-    print(f"Loaded {len(context['always_load_blocks'])} memory blocks")
-    
-    # Search memories
-    health_memories = memory.search("health fitness exercise", k=5)
-    print(f"Found {len(health_memories)} health-related memories")
-    
-    # Update with new information
-    new_experience = """
-    Went for a 5-mile run today. Felt great and my pace is improving. 
-    Also started meal prepping on Sundays which is helping with my 
-    nutrition goals. Overall feeling more energetic.
-    """
-
-    session_id = "health-update-001"
-    session_date="2025-08-10"
-    memory.process_and_commit_session(new_experience, session_id,session_date)
-    
-    #or pass entire conversation as text, you can also process without committing if you want to review first.
-    memory.process_session(json.dumps(conversation), session_id,session_date)
-   
-
-    
-    
-    # Get updated status
-    status = memory.get_repo_status()
-    print(f"Repository now has {status['memory_files_count']} memory files")
-
-if __name__ == "__main__":
-    main()
+memory = create_memory_interface(repo_path, user_id, api_key, auto_onboard=True)
+if not memory.is_onboarded():
+    # User needs onboarding
+    result = memory.onboard_user(user_info)
 ``` 

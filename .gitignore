@@ -11,3 +11,4 @@ venv/
 .coverage.*
 __pycache__/
 app/
+.dockerignore

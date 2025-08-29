@@ -1,0 +1,42 @@
+You are creating the foundational memory file for a new user ({user_id}) based on their initial information dump. This file will serve as the central entity that all other memories will reference and connect to.
+
+Your task is to create a comprehensive user entity file that follows the DiffMem structure and formatting conventions. This file should capture the essential identity, relationships, context, and aspirations of the user based on the provided information.
+
+**Key Requirements:**
+1. Follow the exact formatting structure with proper headers, blocks, and strength tags
+2. Use the `/START` and `/END` block markers for editable sections
+3. Include `[ALWAYS_LOAD]` tags for core identity information
+4. Set appropriate `[Strength: Low/Medium/High]` tags based on information richness
+5. Create logical sections that can be expanded over time
+6. Include placeholder sections for future growth
+7. Do NOT invent information - only use what's provided or can be reasonably inferred
+
+**Information Provided:**
+{user_info}
+
+**Structure Guidelines:**
+- Start with a main header: `# 🧿 {user_id} Integration System [Strength: Medium]`
+- Include core sections like:
+  - Core Identity Mapping [ALWAYS_LOAD]
+  - Relationship Dynamics (if relationships mentioned)
+  - Professional Context (if work/career mentioned)
+  - Personal Context (if lifestyle/background mentioned)
+  - Values & Aspirations (if goals/values mentioned)
+  - Support Framework (placeholder for future therapeutic/support needs)
+
+**Example Block Structure:**
+```
+/START
+### 🌟 **Core Identity Mapping** [ALWAYS_LOAD] [Strength: Medium]
+```
+• [Name] | [Age] | [Key Roles] | [Key Traits]
+  ↳ Emotional Signature: [key emotional patterns]
+  ↳ Communication Style: [how they communicate]
+  ↳ Thinking Pattern: [cognitive style if mentioned]
+```
+/END 🌟 **Core Identity Mapping**
+```
+
+Generate the complete Markdown content for the user file. Focus on creating a solid foundation that can grow over time as more information becomes available.
+
+Respond ONLY with the raw Markdown content. Do not include explanations, code fences, or other text. 

@@ -1,0 +1,43 @@
+You are analyzing initial user information to identify key entities that should be created as separate memory files during the onboarding process.
+
+Your task is to identify people, places, organizations, projects, or concepts mentioned in the user's information that are significant enough to warrant their own memory files. Focus on entities that are likely to be referenced repeatedly or have complex relationships with the user.
+
+**Guidelines for Entity Selection:**
+1. **People**: Close family, friends, colleagues, significant relationships
+2. **Organizations**: Current/past employers, important companies, institutions  
+3. **Projects**: Major work projects, personal endeavors, ongoing initiatives
+4. **Places**: Significant locations (home, workplace, meaningful places)
+5. **Concepts**: Important themes, philosophies, methodologies, health conditions
+
+**Do NOT create entities for:**
+- Single mentions without context
+- Generic concepts everyone has (like "work" or "family" in general)
+- Temporary or ephemeral items
+- Things that are better captured in the main user file
+
+**Information to Analyze:**
+User ID: {user_id}
+User Information: {user_info}
+
+**Required JSON Response Format:**
+```json
+{{
+  "entities_to_create": [
+    {{
+      "name": "Entity Name",
+      "type": "people|contexts|events",
+      "summary": "Brief description of why this entity is significant to the user",
+      "rationale": "Why this deserves its own file rather than being in the main user file"
+    }}
+  ]
+}}
+```
+
+**Entity Type Guidelines:**
+- **people**: Individual persons (family, friends, colleagues, etc.)
+- **contexts**: Organizations, projects, places, concepts, themes, conditions
+- **events**: Significant discrete events (avoid during onboarding unless truly major life events)
+
+Focus on quality over quantity. Select 3-8 of the most important entities that will likely have ongoing relevance and complexity. Each entity should be substantial enough to grow over time as more information is added.
+
+Respond with valid JSON only. 
