@@ -40,7 +40,8 @@ class DiffMemory:
     """
     
     def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, 
-                 model: str = "google/gemini-2.5-pro", auto_onboard: bool = False):
+                 model: str = "google/gemini-2.5-pro", auto_onboard: bool = False,
+                 max_concurrent_llm_calls: int = 8):
         """
         Initialize DiffMemory for a specific user and repository.
         
@@ -50,11 +51,13 @@ class DiffMemory:
             openrouter_api_key: API key for OpenRouter LLM access
             model: Default model for LLM operations
             auto_onboard: If True, will create user structure if it doesn't exist
+            max_concurrent_llm_calls: Maximum number of concurrent LLM calls for parallel processing
         """
         self.repo_path = Path(repo_path)
         self.user_id = user_id
         self.openrouter_api_key = openrouter_api_key
         self.model = model
+        self.max_concurrent_llm_calls = max_concurrent_llm_calls
         
         # Validate paths
         self.user_path = self.repo_path / "users" / user_id
@@ -92,7 +95,8 @@ class DiffMemory:
                 str(self.repo_path),
                 self.user_id,
                 self.openrouter_api_key,
-                self.model
+                self.model,
+                self.max_concurrent_llm_calls
             )
         return self._writer_agent
     

@@ -13,17 +13,19 @@ from datetime import datetime, timedelta
 from pathlib import Path  
 from typing import List, Dict, Any
 from openai import OpenAI  
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class WriterAgent:  
     """Orchestrates the process of updating memory files based on a session."""  
 
-    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: str = "anthropic/claude-3-haiku"):  
+    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: str = "anthropic/claude-3-haiku", max_concurrent_llm_calls: int = 8):  
         self.repo_path = Path(repo_path)  
         self.user_id = user_id  
         self.user_path = self.repo_path / "users" / user_id  
         self.user_file = self.user_path / f"{user_id}.md"  # Core user file at root of user folder  
         self.memories_path = self.user_path / "memories"  
         self.prompts_path = Path(__file__).parent / "prompts"  
+        self.max_concurrent_llm_calls = max_concurrent_llm_calls  # Configurable concurrency limit
         
         if not self.user_path.exists():  
             raise FileNotFoundError(f"User path not found: {self.user_path}")  
@@ -91,25 +93,12 @@ class WriterAgent:
         self.logger.info(f"Identified {len(entities_to_create)} new entities and {len(entities_to_update)} entities to update")
         return response
 
-    def _create_new_entities(self, memory_input: str, entities_to_create: List[Dict]):
-        """STEP 2: Creates files for new entities."""
-        if not entities_to_create:
-            self.logger.info("No new entities to create.")
-            return
-            
-        self.logger.info(f"Creating {len(entities_to_create)} new entity files...")
-      
-        # Use the main user file as the example
-        example_file_path = self.user_file
-        with open(example_file_path, 'r', encoding='utf-8') as f:
-            example_content = f.read()
-
-        system_prompt = self._load_prompt("0_system")
-        
-        for entity in entities_to_create:
+    def _create_single_entity(self, entity: Dict, memory_input: str, example_content: str, example_file_name: str, system_prompt: str) -> Dict:
+        """Helper method to create a single entity file (for parallel execution)."""
+        try:
             creation_prompt_template = self._load_prompt("2_create_entity_file")
             creation_prompt = creation_prompt_template.format(
-                example_file_name=example_file_path.name,
+                example_file_name=example_file_name,
                 example_content=example_content,
                 entity_name=entity['name'],
                 entity_summary=entity['summary'],
@@ -125,9 +114,81 @@ class WriterAgent:
             
             file_name = entity['name'].lower().replace(' ', '_').replace('.', '') + '.md'
             new_file_path = target_dir / file_name
-            with open(new_file_path, 'w', encoding='utf-8') as f:
-                f.write(new_file_content)
-            self.logger.info(f"ENTITY_CREATED: Staged new file at {new_file_path}")
+            
+            return {
+                'success': True,
+                'entity_name': entity['name'],
+                'file_path': new_file_path,
+                'content': new_file_content,
+                'error': None
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'entity_name': entity.get('name', 'unknown'),
+                'file_path': None,
+                'content': None,
+                'error': str(e)
+            }
+
+    def _create_new_entities(self, memory_input: str, entities_to_create: List[Dict]):
+        """STEP 2: Creates files for new entities in parallel."""
+        if not entities_to_create:
+            self.logger.info("No new entities to create.")
+            return
+            
+        self.logger.info(f"Creating {len(entities_to_create)} new entity files in parallel...")
+      
+        # Use the main user file as the example
+        example_file_path = self.user_file
+        with open(example_file_path, 'r', encoding='utf-8') as f:
+            example_content = f.read()
+
+        system_prompt = self._load_prompt("0_system")
+        
+        # Process entities in parallel
+        max_workers = min(len(entities_to_create), self.max_concurrent_llm_calls)  # Limit concurrent LLM calls
+        results = []
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all entity creation tasks
+            future_to_entity = {
+                executor.submit(
+                    self._create_single_entity,
+                    entity,
+                    memory_input,
+                    example_content,
+                    example_file_path.name,
+                    system_prompt
+                ): entity for entity in entities_to_create
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_entity):
+                entity = future_to_entity[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    self.logger.error(f"Failed to create entity {entity.get('name', 'unknown')}: {e}")
+                    results.append({
+                        'success': False,
+                        'entity_name': entity.get('name', 'unknown'),
+                        'error': str(e)
+                    })
+        
+        # Write all successful results to files
+        successful_creates = 0
+        for result in results:
+            if result['success']:
+                with open(result['file_path'], 'w', encoding='utf-8') as f:
+                    f.write(result['content'])
+                self.logger.info(f"ENTITY_CREATED: Staged new file at {result['file_path']}")
+                successful_creates += 1
+            else:
+                self.logger.error(f"Failed to create entity {result['entity_name']}: {result['error']}")
+        
+        self.logger.info(f"Successfully created {successful_creates}/{len(entities_to_create)} entities in parallel")
 
     def _find_text_position(self, content: str, search_text: str, fuzzy: bool = True) -> int:
         """Finds the position of search_text in content, with optional fuzzy matching.
@@ -175,34 +236,17 @@ class WriterAgent:
         
         return len(original)
 
-    def _update_existing_entities(self, memory_input: str, entities_to_update: List[Dict]):
-        """STEP 2: Updates only the identified existing entity files."""
-        if not entities_to_update:
-            self.logger.info("No entities to update.")
-            return
-            
-        self.logger.info(f"Updating {len(entities_to_update)} existing entities...")
-
-        prompt_template = self._load_prompt("3_update_entity_file")
-        system_prompt = self._load_prompt("0_system")
-        # Build list of files to update based on provided file paths
-        files_to_update = [self.user_file]
-        
-        for entity in entities_to_update:
-            if 'file_path' in entity and entity['file_path']:
-                # Use the exact path provided by the LLM from core context
-                file_path = self.user_path / entity['file_path']
-                if file_path.exists():
-                    files_to_update.append(file_path)
-                    self.logger.debug(f"Found entity file: {entity['file_path']}")
-                else:
-                    self.logger.warning(f"Entity file not found: {entity['file_path']}")
-            else:
-                self.logger.warning(f"No file_path provided for entity: {entity.get('name', 'unknown')}")
-
-        for file_path in set(files_to_update):  # Remove duplicates
+    def _update_single_file(self, file_path: Path, memory_input: str, system_prompt: str, prompt_template: str) -> Dict:
+        """Helper method to update a single file (for parallel execution)."""
+        try:
             if not file_path.is_file() or 'repo_guide' in str(file_path) or 'index' in str(file_path):  
-                continue  
+                return {
+                    'success': False,
+                    'file_path': file_path,
+                    'error': 'File not eligible for update',
+                    'updates_applied': 0,
+                    'total_updates': 0
+                }
                 
             with open(file_path, 'r', encoding='utf-8') as f:  
                 original_content = f.read()  
@@ -216,9 +260,14 @@ class WriterAgent:
             response = self._call_llm(system_prompt, prompt, is_json=True)  
             updates = response.get('updates', [])  
             if not updates:  
-                continue  
-                
-            self.logger.info(f"Applying {len(updates)} update(s) to {file_path.name}")  
+                return {
+                    'success': True,
+                    'file_path': file_path,
+                    'error': None,
+                    'updates_applied': 0,
+                    'total_updates': 0,
+                    'modified_content': None
+                }
             
             # Apply updates using search and replace
             modified_content = original_content
@@ -234,7 +283,6 @@ class WriterAgent:
                         # Replace only the first occurrence to maintain precision
                         modified_content = modified_content.replace(search_text, replacement_text, 1)
                         successful_updates += 1
-                        self.logger.debug(f"Replaced text in {file_path.name}")
                     else:
                         self.logger.warning(f"Could not find text to replace in {file_path.name}: {search_text[:50]}...")
                 
@@ -248,7 +296,6 @@ class WriterAgent:
                                           separator + replacement_text + 
                                           modified_content[insert_position:])
                         successful_updates += 1
-                        self.logger.debug(f"Inserted text after marker in {file_path.name}")
                     else:
                         self.logger.warning(f"Could not find insertion point in {file_path.name}: {search_text[:50]}...")
                 
@@ -257,12 +304,103 @@ class WriterAgent:
                     separator = '\n' if not modified_content.endswith('\n') else ''
                     modified_content = modified_content + separator + replacement_text
                     successful_updates += 1
-                    self.logger.debug(f"Appended text to {file_path.name}")
             
-            if successful_updates > 0:
-                with open(file_path, 'w', encoding='utf-8') as f:  
-                    f.write(modified_content)  
-                self.logger.info(f"FILE_UPDATED: Applied {successful_updates}/{len(updates)} updates to {file_path.name}")
+            return {
+                'success': True,
+                'file_path': file_path,
+                'error': None,
+                'updates_applied': successful_updates,
+                'total_updates': len(updates),
+                'modified_content': modified_content if successful_updates > 0 else None
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'file_path': file_path,
+                'error': str(e),
+                'updates_applied': 0,
+                'total_updates': 0
+            }
+
+    def _update_existing_entities(self, memory_input: str, entities_to_update: List[Dict]):
+        """STEP 2: Updates only the identified existing entity files in parallel."""
+        if not entities_to_update:
+            self.logger.info("No entities to update.")
+            return
+            
+        self.logger.info(f"Updating entities for {len(entities_to_update)} existing entities in parallel...")
+
+        prompt_template = self._load_prompt("3_update_entity_file")
+        system_prompt = self._load_prompt("0_system")
+        
+        # Build list of files to update based on provided file paths
+        files_to_update = [self.user_file]
+        
+        for entity in entities_to_update:
+            if 'file_path' in entity and entity['file_path']:
+                # Use the exact path provided by the LLM from core context
+                file_path = self.user_path / entity['file_path']
+                if file_path.exists():
+                    files_to_update.append(file_path)
+                    self.logger.debug(f"Found entity file: {entity['file_path']}")
+                else:
+                    self.logger.warning(f"Entity file not found: {entity['file_path']}")
+            else:
+                self.logger.warning(f"No file_path provided for entity: {entity.get('name', 'unknown')}")
+
+        unique_files = list(set(files_to_update))  # Remove duplicates
+        if not unique_files:
+            self.logger.info("No files to update.")
+            return
+            
+        # Process files in parallel  
+        max_workers = min(len(unique_files), self.max_concurrent_llm_calls)  # Limit concurrent LLM calls for updates
+        results = []
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all file update tasks
+            future_to_file = {
+                executor.submit(
+                    self._update_single_file,
+                    file_path,
+                    memory_input,
+                    system_prompt,
+                    prompt_template
+                ): file_path for file_path in unique_files
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    self.logger.error(f"Failed to update file {file_path}: {e}")
+                    results.append({
+                        'success': False,
+                        'file_path': file_path,
+                        'error': str(e)
+                    })
+        
+        # Write all successful results to files
+        total_files_updated = 0
+        total_updates_applied = 0
+        
+        for result in results:
+            if result['success'] and result.get('modified_content'):
+                with open(result['file_path'], 'w', encoding='utf-8') as f:  
+                    f.write(result['modified_content'])  
+                self.logger.info(f"FILE_UPDATED: Applied {result['updates_applied']}/{result['total_updates']} updates to {result['file_path'].name}")
+                total_files_updated += 1
+                total_updates_applied += result['updates_applied']
+            elif result['success'] and result['updates_applied'] == 0:
+                self.logger.debug(f"No updates needed for {result['file_path'].name}")
+            elif not result['success']:
+                self.logger.error(f"Failed to update {result['file_path']}: {result['error']}")
+        
+        self.logger.info(f"Successfully updated {total_files_updated} files with {total_updates_applied} total updates in parallel")
 
     def _create_timeline_entry(self, session_id: str, session_date: str, memory_input: str):  
         """STEP 3: Diffs staged changes and creates a timeline entry."""  
