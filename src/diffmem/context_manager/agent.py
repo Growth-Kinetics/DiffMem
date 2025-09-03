@@ -38,7 +38,7 @@ class ContextResponse:
     recent_timeline: List[Dict[str, Any]]
     session_metadata: Dict[str, Any]
     complete_entities: List[Dict[str, Any]] = None  # For deep mode
-    temporal_blame: List[Dict[str, Any]] = None      # For temporal mode
+    temporal_evolution: List[Dict[str, Any]] = None  # For temporal mode
 
 class SemanticEntityScorer:  
     """Semantic relevance scoring with intelligent thresholding."""  
@@ -275,7 +275,7 @@ class ContextManager:
         # Initialize response fields
         always_load_blocks = []
         complete_entities = None
-        temporal_blame = None
+        temporal_evolution = None
         
         # Step 3: Load content based on depth mode
         if request.depth in ["basic", "wide"]:
@@ -289,23 +289,23 @@ class ContextManager:
             logger.info(f"DEEP_MODE: Loaded {len(complete_entities)} complete entity files")
             
         elif request.depth == "temporal":
-            # For temporal mode: load complete files + git blame
+            # For temporal mode: load complete files + git evolution history
             complete_entities = self._load_complete_entity_files(unique_entities, user_path)
             
-            # Get blame data for each loaded entity
-            temporal_blame = []
+            # Get evolution data for each loaded entity
+            temporal_evolution = []
             memories_path = user_path / "memories"
             
-            for entity_name in unique_entities[:5]:  # Limit blame to top 5 to prevent context explosion
+            for entity_name in unique_entities[:5]:  # Limit evolution to top 5 to prevent context explosion
                 # Find the entity file
                 for subdir in ['people', 'contexts', 'events']:
                     entity_file = memories_path / subdir / f"{entity_name}.md"
                     if entity_file.exists():
-                        blame_data = self._get_entity_blame(entity_file)
-                        temporal_blame.append(blame_data)
+                        evolution_data = self._get_entity_evolution(entity_file)
+                        temporal_evolution.append(evolution_data)
                         break
             
-            logger.info(f"TEMPORAL_MODE: Loaded {len(complete_entities)} entities with {len(temporal_blame)} blame records")
+            logger.info(f"TEMPORAL_MODE: Loaded {len(complete_entities)} entities with {len(temporal_evolution)} evolution records")
         
         # Step 4: Recent timeline (included for all modes)
         recent_timeline = self._load_recent_timeline(user_path)
@@ -323,11 +323,11 @@ class ContextManager:
                     "basic": "Top entities with ALWAYS_LOAD blocks",
                     "wide": "Semantic search with ALWAYS_LOAD blocks",
                     "deep": "Complete entity files",
-                    "temporal": "Complete files with Git blame"
+                    "temporal": "Complete files with Git evolution history"
                 }.get(request.depth, "Unknown mode")
             },
             complete_entities=complete_entities,
-            temporal_blame=temporal_blame
+            temporal_evolution=temporal_evolution
         )
         
         logger.info(f"CONTEXT_ASSEMBLY_COMPLETE: depth={request.depth} entities={len(unique_entities)}")
@@ -604,72 +604,201 @@ class ContextManager:
         
         return complete_entities
 
-    def _get_entity_blame(self, file_path: Path, max_lines: int = 100) -> Dict[str, Any]:
-        """Get git blame information for an entity file - for temporal mode"""
-        blame_info = {
+    def _get_entity_evolution(self, file_path: Path, max_commits: int = 5) -> Dict[str, Any]:
+        """
+        Get git log with actual changes for an entity file - LLM-optimized format
+        
+        Uses `git log -p` to show actual diff content formatted for LLM understanding
+        of what changed in the entity over time.
+        """
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        evolution_info = {
             'file_path': str(file_path.relative_to(self.repo_path)),
-            'blame_data': [],
-            'unique_commits': set(),
-            'first_commit': None,
-            'last_commit': None,
-            'total_lines': 0
+            'entity_name': file_path.stem,
+            'content': content,
+            'change_history': [],
+            'summary': None
         }
         
         try:
-            # Use git blame to get line-by-line commit info
-            blame_output = self.repo.blame('HEAD', str(file_path.relative_to(self.repo_path)))
+            # Get the relative path for git commands
+            relative_path = str(file_path.relative_to(self.repo_path))
             
-            for commit, lines in blame_output:
-                commit_info = {
-                    'hash': commit.hexsha[:8],
-                    'author': commit.author.name,
-                    'date': datetime.fromtimestamp(commit.committed_date).isoformat(),
-                    'message': commit.message.strip()[:100],  # Truncate message
-                    'lines': len(lines)
-                }
-                
-                blame_info['blame_data'].append(commit_info)
-                blame_info['unique_commits'].add(commit.hexsha)
-                blame_info['total_lines'] += len(lines)
-                
-                # Track first and last commits (compare timestamps directly)
-                if blame_info['first_commit'] is None or commit.committed_date < blame_info['first_commit']['timestamp']:
-                    blame_info['first_commit'] = {
-                        'hash': commit.hexsha[:8],
-                        'date': datetime.fromtimestamp(commit.committed_date).isoformat(),
-                        'message': commit.message.strip()[:100],
-                        'timestamp': commit.committed_date  # Keep timestamp for comparison
-                    }
-                    
-                if blame_info['last_commit'] is None or commit.committed_date > blame_info['last_commit']['timestamp']:
-                    blame_info['last_commit'] = {
-                        'hash': commit.hexsha[:8],
-                        'date': datetime.fromtimestamp(commit.committed_date).isoformat(),
-                        'message': commit.message.strip()[:100],
-                        'timestamp': commit.committed_date  # Keep timestamp for comparison
-                    }
+            # Use git log -p to get commits with actual diff content
+            # Format: --pretty=format with custom format + -p for patch
+            log_output = self.repo.git.log(
+                '--follow',  # Follow file renames
+                '-p',        # Show patch (diff) for each commit
+                f'--max-count={max_commits}',
+                '--pretty=format:COMMIT_START|%H|%an|%ad|%s|COMMIT_END',
+                '--date=relative',
+                '--',
+                relative_path
+            )
             
-            # Remove timestamp from final output (it was only for comparison)
-            if blame_info['first_commit']:
-                blame_info['first_commit'].pop('timestamp', None)
-            if blame_info['last_commit']:
-                blame_info['last_commit'].pop('timestamp', None)
+            if not log_output.strip():
+                evolution_info['summary'] = f"No git history found for {file_path.stem}"
+                return evolution_info
             
-            # Convert set to count for serialization
-            blame_info['unique_commits'] = len(blame_info['unique_commits'])
+            # Parse the git log output
+            changes = self._parse_git_log_with_patches(log_output, file_path.stem)
+            evolution_info['change_history'] = changes
             
-            # Limit blame data to prevent context explosion
-            if len(blame_info['blame_data']) > max_lines:
-                blame_info['blame_data'] = blame_info['blame_data'][:max_lines]
-                blame_info['truncated'] = True
+            # Generate LLM-friendly summary
+            evolution_info['summary'] = self._generate_change_summary(changes, file_path.stem)
             
-            logger.debug(f"TEMPORAL_BLAME: {file_path.stem} has {blame_info['unique_commits']} unique commits")
+            logger.debug(f"ENTITY_EVOLUTION: {file_path.stem} has {len(changes)} changes with actual diffs")
             
         except Exception as e:
-            logger.warning(f"BLAME_ERROR: file={file_path} error={str(e)}")
-            blame_info['error'] = str(e)
+            logger.warning(f"EVOLUTION_ERROR: file={file_path} error={str(e)}")
+            evolution_info['error'] = str(e)
+            evolution_info['summary'] = f"Error retrieving evolution history: {str(e)}"
         
-        return blame_info
+        return evolution_info
+    
+    def _parse_git_log_with_patches(self, log_output: str, entity_name: str) -> List[Dict[str, Any]]:
+        """Parse git log -p output into LLM-friendly change records"""
+        changes = []
+        
+        # Split by commit markers
+        sections = log_output.split('COMMIT_START|')
+        
+        for section in sections[1:]:  # Skip first empty section
+            if not section.strip():
+                continue
+                
+            lines = section.split('\n')
+            if not lines or 'COMMIT_END' not in lines[0]:
+                continue
+            
+            # Parse commit header
+            header_parts = lines[0].split('|')
+            if len(header_parts) < 5:
+                continue
+                
+            commit_hash = header_parts[0][:8]
+            author = header_parts[1]
+            date = header_parts[2]
+            message = header_parts[3]
+            
+            # Find where the diff starts (after "COMMIT_END")
+            diff_start = -1
+            for i, line in enumerate(lines):
+                if line.startswith('diff --git'):
+                    diff_start = i
+                    break
+            
+            if diff_start == -1:
+                # No diff found, might be an empty commit
+                changes.append({
+                    'hash': commit_hash,
+                    'author': author,
+                    'date': date,
+                    'message': message.strip(),
+                    'changes_description': "No content changes detected",
+                    'diff_summary': "Empty commit or file creation"
+                })
+                continue
+            
+            # Process the diff
+            diff_lines = lines[diff_start:]
+            change_description, diff_summary = self._analyze_diff_for_llm(diff_lines, entity_name)
+            
+            changes.append({
+                'hash': commit_hash,
+                'author': author,
+                'date': date,
+                'message': message.strip(),
+                'changes_description': change_description,
+                'diff_summary': diff_summary
+            })
+        
+        return changes
+    
+    def _analyze_diff_for_llm(self, diff_lines: List[str], entity_name: str) -> Tuple[str, str]:
+        """
+        Analyze git diff output and create LLM-friendly descriptions of what changed
+        
+        Returns: (human_readable_description, key_changes_summary)
+        """
+        added_lines = []
+        removed_lines = []
+        context_lines = []
+        
+        current_section = None
+        
+        for line in diff_lines:
+            if line.startswith('@@'):
+                # Hunk header - extract line numbers for context
+                current_section = line
+                continue
+            elif line.startswith('+') and not line.startswith('+++'):
+                added_lines.append(line[1:].strip())
+            elif line.startswith('-') and not line.startswith('---'):
+                removed_lines.append(line[1:].strip())
+            elif line.startswith(' '):
+                context_lines.append(line[1:].strip())
+        
+        # Create human-readable description
+        description_parts = []
+        
+        if added_lines:
+            # Filter out empty lines for summary
+            meaningful_adds = [line for line in added_lines if line.strip()]
+            if meaningful_adds:
+                if len(meaningful_adds) <= 3:
+                    description_parts.append(f"ADDED: {'; '.join(meaningful_adds[:3])}")
+                else:
+                    description_parts.append(f"ADDED: {len(meaningful_adds)} new lines including: {'; '.join(meaningful_adds[:2])}...")
+        
+        if removed_lines:
+            meaningful_removes = [line for line in removed_lines if line.strip()]
+            if meaningful_removes:
+                if len(meaningful_removes) <= 3:
+                    description_parts.append(f"REMOVED: {'; '.join(meaningful_removes[:3])}")
+                else:
+                    description_parts.append(f"REMOVED: {len(meaningful_removes)} lines including: {'; '.join(meaningful_removes[:2])}...")
+        
+        changes_description = " | ".join(description_parts) if description_parts else "Minor formatting changes"
+        
+        # Create summary for LLM context
+        total_changes = len(added_lines) + len(removed_lines)
+        if total_changes == 0:
+            diff_summary = "No content changes"
+        elif total_changes <= 5:
+            diff_summary = f"Small update ({total_changes} lines changed)"
+        elif total_changes <= 20:
+            diff_summary = f"Moderate update ({total_changes} lines changed)"
+        else:
+            diff_summary = f"Major update ({total_changes} lines changed)"
+        
+        return changes_description, diff_summary
+    
+    def _generate_change_summary(self, changes: List[Dict[str, Any]], entity_name: str) -> str:
+        """Generate LLM-optimized summary of entity changes"""
+        if not changes:
+            return f"No change history available for {entity_name}"
+        
+        total_commits = len(changes)
+        recent_change = changes[0]  # Most recent (git log shows newest first)
+        
+        summary_parts = [
+            f"CHANGE_HISTORY_SUMMARY for {entity_name}:",
+            f"• Total commits: {total_commits}",
+            f"• Most recent: {recent_change['date']} by {recent_change['author']}",
+            f"• Latest change: {recent_change['changes_description'][:100]}..."
+        ]
+        
+        # Add pattern analysis
+        authors = [c['author'] for c in changes]
+        primary_author = max(set(authors), key=authors.count)
+        
+        summary_parts.append(f"• Primary contributor: {primary_author}")
+        
+        return '\n'.join(summary_parts)
 
     def get_session_context(self, conversation: List[Dict[str, str]], 
                           depth: str = "basic") -> Dict[str, Any]:
@@ -703,7 +832,7 @@ class ContextManager:
         if response.complete_entities is not None:
             result['complete_entities'] = response.complete_entities
             
-        if response.temporal_blame is not None:
-            result['temporal_blame'] = response.temporal_blame
+        if response.temporal_evolution is not None:
+            result['temporal_evolution'] = response.temporal_evolution
         
         return result 
