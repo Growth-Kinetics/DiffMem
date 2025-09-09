@@ -1,9 +1,11 @@
 Module:
-- Split repos so that it is one repo per user.
+- Split repos so that it is one repo per user?
 - Verify that all agents have only access to the user's folder and put in checks to prevent accessing other folders.
 - Clean up call_llm so that it shunted to a util and called more sensibly.
 - Fix that when an index is not found it makes it but doesn´t immediately load it in same process.
 - Prompt caching for retrieval during ongoing conversation turns.
+- Swap out the agents from working with md files to working with json files, then build the md from JSON.
+
 
 Maintaining:
 - Randomly sample a couple of entities for merge/link review for ongoing prunig maintenante, use last_edited and last_accessed for adjusting strenght, have the job maintain the "semantic index".
@@ -22,3 +24,11 @@ Loading:
 
 Init: 
 - Need a demo repo to show how this works in practice, and an init script.
+
+Eval: 
+https://github.com/snap-research/locomo
+https://github.com/plastic-labs/honcho
+https://x.com/vintrotweets
+https://x.com/plastic_labs/status/1958628537969037438
+https://x.com/honchodotdev
+https://blog.plasticlabs.ai/blog/Beyond-the-User-Assistant-Paradigm;-Introducing-Peers
