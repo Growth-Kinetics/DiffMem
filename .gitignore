@@ -13,3 +13,5 @@ __pycache__/
 app/
 .dockerignore
 *.ipynb
+*.mp3
+transcriber/

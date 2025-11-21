@@ -60,7 +60,7 @@ class DiffMemory:
         self.max_concurrent_llm_calls = max_concurrent_llm_calls
         
         # Validate paths
-        self.user_path = self.repo_path / "users" / user_id
+        self.user_path = self.repo_path
         if not self.user_path.exists():
             if auto_onboard:
                 logger.info(f"User path not found, auto_onboard enabled: {self.user_path}")
@@ -110,8 +110,15 @@ class DiffMemory:
     
     def rebuild_index(self) -> None:
         """Force rebuild of BM25 index (call after memory updates)"""
-        logger.info("Rebuilding BM25 index...")
+        logger.info("Rebuilding indexes...")
         self._bm25_index = build_index(str(self.repo_path))
+        
+        # Rebuild context manager indexes (embeddings)
+        # Access via property to ensure it's initialized, then rebuild
+        try:
+            self.context_manager.rebuild_indexes()
+        except Exception as e:
+            logger.warning(f"Could not rebuild context manager indexes: {e}")
     
     def is_onboarded(self) -> bool:
         """Check if user has been properly onboarded"""

@@ -58,7 +58,7 @@ class SemanticEntityScorer:
     def _entity_to_text(self, entity: Dict) -> str:  
         """Convert entity metadata to semantic text representation."""  
         parts = [  
-            entity['name'],  
+            entity.get('name', 'unknown'),  
             entity.get('role', ''),  
             ' '.join(entity.get('aliases', [])),  
             ' '.join(entity.get('hard_cues', [])),  
@@ -103,7 +103,7 @@ class SemanticEntityScorer:
         """  
         
         # 1. Embed the conversation  
-        conv_text = ' '.join([msg['content'] for msg in conversation])  
+        conv_text = ' '.join([msg.get('content', '') for msg in conversation])  
         conv_embedding = self.model.encode(conv_text)  
         
         # 2. Compute similarities  
@@ -126,7 +126,7 @@ class SemanticEntityScorer:
             if 'last_update' in entity:  
                 try:
                     # Parse the entity's last_update datetime
-                    last_update_str = entity['last_update']
+                    last_update_str = entity.get('last_update', '')
                     # Remove timezone info if present to make it naive
                     last_update_str = re.sub(r'\s*[+-]\d{4}$', '', last_update_str)
                     last_update_dt = datetime.fromisoformat(last_update_str)
@@ -144,7 +144,7 @@ class SemanticEntityScorer:
                 'entity': entity,  
                 'score': adjusted_score,  
                 'raw_similarity': similarity,  
-                'type': entity['type']  
+                'type': entity.get('type', 'unknown')  
             })  
         
         # 3. Determine relevance threshold  
@@ -182,7 +182,7 @@ class SemanticEntityScorer:
             
             # Apply boosts and check if it brings any new entities above threshold  
             for item in scored_entities:  
-                entity_name = item['entity']['name'].lower().replace(' ', '_')  
+                entity_name = item['entity'].get('name', 'unknown').lower().replace(' ', '_')  
                 if entity_name in related_boost:  
                     boosted_score = item['score'] + related_boost[entity_name]  
                     # If boost brings it above threshold and it wasn't already included  
@@ -222,7 +222,8 @@ class ContextManager:
 
         self.repo_path = Path(repo_path)  
         self.user_id = user_id  
-        self.user_path = self.repo_path / "users" / user_id  
+        # With worktrees, repo_path IS the user root
+        self.user_path = self.repo_path 
         self.user_file = self.user_path / f"{user_id}.md"  # Core user file at root of user folder  
         self.memories_path = self.user_path / "memories"  
         self.prompts_path = Path(__file__).parent / "prompts"  
@@ -236,10 +237,28 @@ class ContextManager:
         self.openrouter_api_key = openrouter_api_key
         self.model = model
         
-        # Initialize BM25 index (rebuild on start)
-        logger.info("CONTEXT_MANAGER_INIT: Building BM25 index...")
+        # Initialize Indexes (BM25 & Semantic)
+        self.index = None
+        self.master_index = None
+        self.semantic_scorer = None
+        
+        self.rebuild_indexes()
+
+    def rebuild_indexes(self):
+        """Rebuild both BM25 and Semantic indexes/caches"""
+        logger.info("CONTEXT_MANAGER: Rebuilding indexes...")
+        
+        # 1. BM25
         self.index = build_index(str(self.repo_path))
-        logger.info(f"CONTEXT_MANAGER_READY: Index built with {len(self.index['corpus'])} blocks")
+        logger.info(f"CONTEXT_MANAGER_READY: BM25 built with {len(self.index['corpus'])} blocks")
+
+        # 2. Semantic Scorer (Embeddings)
+        self.master_index = self._load_master_index(self.user_path)
+        if self.master_index['entities']:
+            logger.info(f"CONTEXT_MANAGER: Caching embeddings for {len(self.master_index['entities'])} entities...")
+            self.semantic_scorer = SemanticEntityScorer(self.master_index['entities'])
+        else:
+            self.semantic_scorer = None
 
     def assemble_context(self, request: ContextRequest) -> ContextResponse:
         """
@@ -254,13 +273,17 @@ class ContextManager:
         """
         logger.info(f"CONTEXT_ASSEMBLY_START: user={request.user_id} depth={request.depth} conv_pairs={len(request.conversation)}")
         
-        user_path = self.repo_path / "users" / request.user_id
+        user_path = self.repo_path
         if not user_path.exists():
             raise FileNotFoundError(f"User path not found: {user_path}")
         
         # Step 1: Load master index for entity ranking
-        master_index = self._load_master_index(user_path)
-        entities = [Path(x["file"]).stem for x in master_index["entities"]][0:5]
+        # Use cached index if available, otherwise reload (failsafe)
+        if self.master_index is None:
+            self.rebuild_indexes()
+            
+        master_index = self.master_index
+        entities = [Path(x["file"]).stem for x in master_index["entities"] if "file" in x][0:5]
         
         # Extract entities for non-basic modes
         if request.depth != "basic":
@@ -437,16 +460,17 @@ class ContextManager:
         # Strategy 1: Using Searcher Agent
         result = orchestrate_query(conversation, self.index, model="google/gemini-2.5-flash")
         
-        # Strategy 2: Using Semantic Index
-        scorer = SemanticEntityScorer(index['entities'])
-        relevant = scorer.score_conversation(  
-        conversation,  
-        min_similarity=0.2,  # Nothing below 60% similarity  
-        relevance_margin=0.2,   # Include anything within 10% of top match 
-        max_results=5
-        ) 
+        # Strategy 2: Using Cached Semantic Index
+        relevant = []
+        if self.semantic_scorer:
+            relevant = self.semantic_scorer.score_conversation(  
+                conversation,  
+                min_similarity=0.2,  # Nothing below 60% similarity  
+                relevance_margin=0.2,   # Include anything within 10% of top match 
+                max_results=5
+            ) 
         
-        entities = [Path(f["file_path"]).stem for f in result["snippets"]] +  [Path(f["entity"]["file"]).stem for f in relevant]
+        entities = [Path(f["file_path"]).stem for f in result["snippets"]] +  [Path(f["entity"]["file"]).stem for f in relevant if "file" in f["entity"]]
         unique_entities = list(set(entities))
         logger.debug(f"ENTITIES_EXTRACTED: total={len(unique_entities)} entities={unique_entities}")
         return unique_entities
@@ -490,16 +514,47 @@ class ContextManager:
         """Load ALWAYS_LOAD blocks only from top entities in master index"""
         always_load_blocks = []
         entity_set = {name.lower() for name in entities_list}
-        entity_files = [] 
         
-        # Recursively find all .md files  
-        for md_file in self.repo_path.rglob('*.md'):  
-            # Check if this file matches any entity  
-            if md_file.stem.lower() in entity_set:  
-                entity_files.append(md_file)        
+        # Build index lookup for efficient path resolution
+        index_lookup = {}
+        if self.master_index and self.master_index.get('entities'):
+            for entity_data in self.master_index['entities']:
+                entity_name = entity_data.get('name', '').lower().replace(' ', '_').replace('.', '')
+                if 'file' in entity_data:
+                    index_lookup[entity_name] = entity_data['file']
         
-        for file_path in entity_files:
+        entity_files = []
+        
+        # Process each entity with fallback strategy
+        for entity_name in entity_set:
+            entity_file = None
             
+            # Strategy 1: Try master index path
+            if entity_name in index_lookup:
+                index_path = user_path / index_lookup[entity_name]
+                if index_path.exists():
+                    entity_file = index_path
+                    logger.debug(f"ENTITY_FOUND_INDEX: {entity_name} at {index_path}")
+                else:
+                    logger.warning(f"ENTITY_INDEX_STALE: {entity_name} index points to {index_path} but file not found")
+            
+            # Strategy 2: Fallback to recursive filesystem search
+            if not entity_file:
+                for md_file in self.repo_path.rglob('*.md'):
+                    if '/sessions/' in str(md_file).replace('\\', '/'):
+                        continue  # Skip sessions folder
+                    if md_file.stem.lower() == entity_name:
+                        entity_file = md_file
+                        logger.debug(f"ENTITY_FOUND_FALLBACK: {entity_name} at {entity_file}")
+                        break
+            
+            if entity_file:
+                entity_files.append(entity_file)
+            else:
+                logger.warning(f"ENTITY_NOT_FOUND: Could not locate file for '{entity_name}'")
+        
+        # Extract ALWAYS_LOAD blocks from found files
+        for file_path in entity_files:
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
@@ -516,7 +571,7 @@ class ContextManager:
                         header = lines[0] if lines else "Unknown Block"
                         
                         always_load_blocks.append({
-                            'file_path': file_path,
+                            'file_path': str(file_path.relative_to(self.repo_path)),
                             'header': header.strip('#').strip(),
                             'content': block_content.strip(),
                             'type': 'always_load'
@@ -580,27 +635,54 @@ class ContextManager:
         if not memories_path.exists():
             return complete_entities
         
-        # Check people, contexts, and timeline directories
-        for subdir in ['people', 'contexts']:
-            subdir_path = memories_path / subdir
-            if subdir_path.exists():
-                for md_file in subdir_path.glob('*.md'):
-                    if md_file.stem.lower() in entity_set:
-                        try:
-                            with open(md_file, 'r', encoding='utf-8') as f:
-                                content = f.read()
-                            
-                            complete_entities.append({
-                                'entity_name': md_file.stem,
-                                'file_path': str(md_file.relative_to(self.repo_path)),
-                                'content': content,
-                                'type': 'complete_entity',
-                                'subdir': subdir
-                            })
-                            logger.debug(f"DEEP_MODE_LOADED: {md_file.stem} from {subdir} ({len(content)} chars)")
-                            
-                        except Exception as e:
-                            logger.warning(f"DEEP_MODE_LOAD_ERROR: file={md_file} error={str(e)}")
+        # First, try to use master index for efficient lookup
+        index_lookup = {}
+        if self.master_index and self.master_index.get('entities'):
+            for entity_data in self.master_index['entities']:
+                entity_name = entity_data.get('name', '').lower().replace(' ', '_').replace('.', '')
+                if 'file' in entity_data:
+                    index_lookup[entity_name] = entity_data['file']
+        
+        # Process each entity
+        for entity_name in entity_set:
+            entity_file = None
+            
+            # Strategy 1: Try master index path
+            if entity_name in index_lookup:
+                index_path = user_path / index_lookup[entity_name]
+                if index_path.exists():
+                    entity_file = index_path
+                    logger.debug(f"ENTITY_FOUND_INDEX: {entity_name} at {index_path}")
+                else:
+                    logger.warning(f"ENTITY_INDEX_STALE: {entity_name} index points to {index_path} but file not found")
+            
+            # Strategy 2: Fallback to filesystem search
+            if not entity_file:
+                for md_file in memories_path.rglob('*.md'):
+                    if md_file.stem.lower() == entity_name:
+                        entity_file = md_file
+                        logger.debug(f"ENTITY_FOUND_FALLBACK: {entity_name} at {entity_file}")
+                        break
+            
+            # Load the file if found
+            if entity_file:
+                try:
+                    with open(entity_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    complete_entities.append({
+                        'entity_name': entity_file.stem,
+                        'file_path': str(entity_file.relative_to(self.repo_path)),
+                        'content': content,
+                        'type': 'complete_entity',
+                        'subdir': entity_file.parent.name
+                    })
+                    logger.debug(f"DEEP_MODE_LOADED: {entity_file.stem} ({len(content)} chars)")
+                    
+                except Exception as e:
+                    logger.warning(f"DEEP_MODE_LOAD_ERROR: file={entity_file} error={str(e)}")
+            else:
+                logger.warning(f"ENTITY_NOT_FOUND: Could not locate file for '{entity_name}'")
         
         return complete_entities
 

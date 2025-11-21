@@ -21,13 +21,14 @@ Schema (return minified JSON, no line breaks; validate against it):
 "aliases": ["alt1", "alt2"], // optional
 "type": "human | project | company | location | concept",
 "role": "short job tag / purpose", // <15 tokens
-"file": "users/<user>/memories/...<filename>.md",
 "strength": "Low|Medium|High", // aka edit recency & density
 "hard_cues": ["keyword1", "keyword2"], // factual, searchable
 "soft_cues": ["implicit association", "joke-tone"], // human-readable heuristics
 "emotional_cues": ["warm trust", "aching regret", "electric excitement"], // colours retrieval
 "related_entities": ["slug1", "slug2"], // snake_case
 }}
+
+NOTE: Do NOT include a "file" field - the file path will be automatically computed from the actual file location.
 
 Guidelines for populating fields
 
@@ -47,4 +48,4 @@ File Content:
 {file_content}
 
 Example ideal return:
-{{"name":"Nova Lumi","aliases":["Novie","Lumi"],"type":"concept","role":"AR journaling app prototype","file":"users/demo/memories/contexts/nova_lumi.md","strength":"Medium","hard_cues":["popup city hacks","3-panel UI fork","offline sync","E Ink mirage","November sprint"],"soft_cues":["Midnight porch sketching","vinyl-crackle lofi","jasmine tea steam"],"emotional_cues":["tingling maybe-magic","cautious optimism","failed-demo sting"],"related_entities":["zoe_design_partner","evan_soundtrack"]}}
+{{"name":"Nova Lumi","aliases":["Novie","Lumi"],"type":"concept","role":"AR journaling app prototype","strength":"Medium","hard_cues":["popup city hacks","3-panel UI fork","offline sync","E Ink mirage","November sprint"],"soft_cues":["Midnight porch sketching","vinyl-crackle lofi","jasmine tea steam"],"emotional_cues":["tingling maybe-magic","cautious optimism","failed-demo sting"],"related_entities":["zoe_design_partner","evan_soundtrack"]}}

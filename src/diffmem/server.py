@@ -11,37 +11,38 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 import git
 from git import Repo
-
-from .api import DiffMemory, onboard_new_user
-
-
 #for local dev
 from dotenv import load_dotenv
 load_dotenv()
-
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 # Configuration from environment
+API_URL = os.getenv("API_URL", "http://localhost:8000")
 GITHUB_REPO_URL = os.getenv("GITHUB_REPO_URL")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") 
 GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "google/gemini-2.5-pro")
-REPO_PATH = Path(os.getenv("REPO_PATH", "/app/memory_repo"))
+# Git Paths
+STORAGE_PATH = Path(os.getenv("STORAGE_PATH", "/app/diffmem_storage"))
+WORKTREE_ROOT = Path(os.getenv("WORKTREE_ROOT", "/app/active_contexts"))
+# Configuration
 SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", "5"))
 API_KEY = os.getenv("API_KEY")
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "true").lower() == "true"
-
 security = HTTPBearer(auto_error=False)
+#import diffmem relative modules
+from .api import DiffMemory, onboard_new_user
+from .repo_manager import RepoManager
+# Global RepoManager instance
+repo_manager: Optional[RepoManager] = None
 
 async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
     """Verify API key authentication"""
@@ -78,6 +79,7 @@ async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = D
 
 
 # Global DiffMemory instances (one per user)
+# This cache might need careful management if users are inactive for long
 memory_instances: Dict[str, DiffMemory] = {}
 
 # Pydantic models
@@ -102,21 +104,25 @@ class OnboardUserRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="Optional session ID for tracking")
 
 def get_memory_instance(user_id: str, allow_unboarded: bool = False) -> DiffMemory:
-    """Get or create DiffMemory instance for user"""
+    """Get or create DiffMemory instance for user, ensuring worktree is mounted."""    
     if user_id not in memory_instances:
         try:
+            # 1. Ensure user repo (worktree) is mounted
+            user_repo_path = repo_manager.get_user_worktree(user_id)
+            logger.info(f"MEMORY_MOUNT: Mounted worktree for {user_id} at {user_repo_path}")
+            
+            # 2. Initialize DiffMemory with the worktree path
             memory_instances[user_id] = DiffMemory(
-                str(REPO_PATH), 
+                user_repo_path, 
                 user_id, 
                 OPENROUTER_API_KEY,
                 DEFAULT_MODEL,
-                auto_onboard=allow_unboarded  # Allow unboarded users when requested
+                auto_onboard=allow_unboarded 
             )
-            logger.info(f"MEMORY_INSTANCE_CREATED: user={user_id} allow_unboarded={allow_unboarded}")
+            logger.info(f"MEMORY_INSTANCE_CREATED: user={user_id}")            
         except Exception as e:
             logger.error(f"Failed to create memory instance for {user_id}: {e}")
             if allow_unboarded:
-                # More specific error for onboarding scenarios
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to initialize memory system for user {user_id}: {str(e)}"
@@ -125,214 +131,51 @@ def get_memory_instance(user_id: str, allow_unboarded: bool = False) -> DiffMemo
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"User {user_id} not found or memory setup invalid. Use /onboard endpoint to create user."
-                )
-    
+                )    
     return memory_instances[user_id]
 
-def parse_github_repo_slug(github_url):
-    """Extract owner/repo from various GitHub URL formats"""
-    if github_url.startswith("https://github.com/"):
-        return github_url.replace("https://github.com/", "").replace(".git", "")
-    elif github_url.startswith("git@github.com:"):
-        return github_url.split(":")[1].replace(".git", "")
-    else:
-        # Assume it's already in owner/repo format
-        return github_url.replace(".git", "")
-def get_authenticated_url(github_url: str, github_token: str) -> str:
-    """Get consistently formatted authenticated GitHub URL"""
-    repo_slug = parse_github_repo_slug(github_url)
-    # Use the format that works for both fetch and push
-    return f"https://{github_token}@github.com/{repo_slug}.git"
-
-async def setup_repository():
-    """Setup Git repository with proper remote configuration"""
-    repo_path = Path(os.getenv("REPO_PATH", "/app/memory_repo"))
-    github_url = os.getenv("GITHUB_REPO_URL")
-    github_token = os.getenv("GITHUB_TOKEN")
-    branch = os.getenv("GITHUB_BRANCH", "main")
-    
-    # Initialize repo if it doesn't exist
-    if not repo_path.exists():
-        repo_path.mkdir(parents=True, exist_ok=True)
-    
+async def sync_user_to_github(user_id: str, force: bool = False):
+    """Push user changes to GitHub via RepoManager"""
     try:
-        repo = git.Repo(repo_path)
-    except git.InvalidGitRepositoryError:
-        repo = git.Repo.init(repo_path)
-    
-    # Configure git settings
-    with repo.config_writer() as git_config:
-        git_config.set_value("user", "name", "DiffMem")
-        git_config.set_value("user", "email", "diffmem@system.local")
-        git_config.set_value("http", "postBuffer", "524288000")
-        git_config.set_value("http", "version", "HTTP/1.1")
-        git_config.set_value("credential", "helper", "")
-    
-    # Configure remote if GitHub URL is provided
-    if github_url and github_token:
-        repo_slug = parse_github_repo_slug(github_url)
-        
-        # Use CONSISTENT authentication format
-        auth_url = get_authenticated_url(github_url, github_token)
-        
-        logger.info(f"Configuring remote for repository: {repo_slug}")
-        
-        # Add or update remote with authenticated URL
-        if "origin" not in [remote.name for remote in repo.remotes]:
-            origin = repo.create_remote("origin", auth_url)
-        else:
-            origin = repo.remotes.origin
-            origin.set_url(auth_url)
-        
-        # Store the authenticated URL in git config
-        with repo.config_writer() as git_config:
-            git_config.set_value(f'remote "origin"', "url", auth_url)
-        
-        # Fetch and setup branch
-        try:
-            logger.info(f"Fetching from origin...")
-            origin.fetch()
-            
-            remote_refs = [ref.name for ref in origin.refs]
-            logger.info(f"Available remote refs: {remote_refs}")
-            
-            if f"origin/{branch}" in remote_refs:
-                logger.info(f"Remote branch {branch} exists, checking out...")
-                
-                if branch not in repo.heads:
-                    repo.create_head(branch, f"origin/{branch}")
-                
-                repo.heads[branch].set_tracking_branch(origin.refs[branch])
-                repo.heads[branch].checkout()
-                
-                # Pull with authenticated URL
-                repo.git.pull("origin", branch)
-                logger.info(f"Successfully pulled branch {branch}")
-                
-            else:
-                logger.info(f"Remote branch {branch} doesn't exist, creating...")
-                
-                if branch not in repo.heads:
-                    if not repo.heads:
-                        readme = repo_path / "README.md"
-                        if not readme.exists():
-                            readme.write_text("# DiffMem Repository\n\nInitialized by DiffMem system.")
-                            repo.index.add([str(readme)])
-                            repo.index.commit("Initial commit")
-                    
-                    if repo.heads:
-                        repo.create_head(branch)
-                    else:
-                        repo.git.checkout("-b", branch)
-                
-                repo.heads[branch].checkout()
-                
-                logger.info(f"Pushing new branch {branch} to origin...")
-                repo.git.push("--set-upstream", "origin", branch)
-                logger.info(f"Successfully created and pushed branch {branch}")
-                
-        except git.exc.GitCommandError as e:
-            if "403" in str(e):
-                logger.error(f"Authentication failed (403). Check your PAT permissions: {e}")
-                logger.error("Required PAT scopes: repo (full control), workflow (if using Actions)")
-                raise
-            else:
-                logger.warning(f"Git operation failed: {e}")
-                raise
-                
-    else:
-        logger.warning("No GitHub URL or token provided, working with local repository only")
-    
-    return repo
+        # Just call the sync method on repo manager
 
-async def sync_to_github(force: bool = False):
-    """Push any changes back to GitHub with proper authentication"""
-    try:
-        repo = Repo(REPO_PATH)
-        
-        # Ensure we have the authenticated URL for pushing
-        if GITHUB_REPO_URL and GITHUB_TOKEN:
-            # Use SAME authentication format as setup
-            auth_url = get_authenticated_url(GITHUB_REPO_URL, GITHUB_TOKEN)
-            
-            # Update remote URL with authentication before each push
-            origin = repo.remotes.origin
-            origin.set_url(auth_url)
-            
-            # Log without exposing full token
-            repo_slug = parse_github_repo_slug(GITHUB_REPO_URL)
-            masked_token = f"{GITHUB_TOKEN[:8]}...{GITHUB_TOKEN[-4:]}"
-            logger.info(f"REMOTE_URL_SET: https://{masked_token}@github.com/{repo_slug}.git")
-        
-        # Check for changes
-        has_changes = repo.is_dirty() or repo.untracked_files
-        
-        if has_changes:
-            repo.git.add(A=True)
-            repo.git.commit(m=f"Auto-sync: {datetime.now().isoformat()}")
-            logger.info("CHANGES_COMMITTED: Local changes staged and committed")
-            force = True  # We made changes, so push
-        
-        # Push if forced or if we just committed
-        if force:
-            current_branch = repo.active_branch.name
-            origin.push(refspec=f"{current_branch}:{current_branch}")
-            logger.info(f"REPO_SYNCED: Changes pushed to GitHub branch {current_branch}")
-        else:
-            logger.info("NO_CHANGES: Repository is clean")
-        
-    except git.exc.GitCommandError as e:
-        if "403" in str(e) or "401" in str(e):
-            logger.error(f"AUTH_FAILED: {e}")
-            logger.error("PAT_CHECK: Verify token has 'repo' scope and hasn't expired")
-            logger.error(f"REPO_ACCESS: Confirm access to {GITHUB_REPO_URL}")
-        else:
-            logger.error(f"GIT_ERROR: {e}")
+        repo_manager.sync_user(user_id)
+        logger.info(f"USER_SYNCED: {user_id}")
     except Exception as e:
-        logger.error(f"SYNC_ERROR: {e}")
+        logger.error(f"SYNC_ERROR for {user_id}: {e}")
 
-async def pull_latest():
-    """Simple pull from GitHub before processing"""
-    try:
-        repo = Repo(REPO_PATH)
-        
-        if GITHUB_REPO_URL and GITHUB_TOKEN:
-            # Use SAME authentication format
-            auth_url = get_authenticated_url(GITHUB_REPO_URL, GITHUB_TOKEN)
-            origin = repo.remotes.origin
-            origin.set_url(auth_url)
-        
-        # Simple fetch and pull
-        origin.fetch()
-        current_branch = repo.active_branch.name
-        
-        if not (repo.is_dirty() or repo.untracked_files):
-            repo.git.pull("origin", current_branch)
-            logger.info("PULL_SUCCESS: Latest changes pulled")
-        else:
-            logger.info("PULL_SKIPPED: Local changes present")
-            
-    except Exception as e:
-        logger.error(f"PULL_ERROR: {e}")
-        
 async def periodic_sync():
-    """Periodically sync repository with GitHub"""
+    """Periodically sync all active users"""
     while True:
+        await asyncio.sleep(SYNC_INTERVAL_MINUTES * 60)
         try:
-            await sync_to_github()
+            active_users = repo_manager.list_active_users()
+            logger.info(f"PERIODIC_SYNC: Syncing {len(active_users)} active users...")
+            for user_id in active_users:
+                await sync_user_to_github(user_id)
         except Exception as e:
             logger.error(f"Periodic sync error: {e}")
-        
-        await asyncio.sleep(SYNC_INTERVAL_MINUTES * 60)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan management"""
+    global repo_manager
+    
     # Startup
     logger.info("DiffMem server starting up...")
     
-    # Setup repository
-    await setup_repository()
+    # Initialize RepoManager
+    repo_manager = RepoManager(
+        storage_path=str(STORAGE_PATH),
+        worktree_root=str(WORKTREE_ROOT),
+        github_url=GITHUB_REPO_URL,
+        github_token=GITHUB_TOKEN
+    )
+    logger.info(f"REPO_MANAGER: Initialized (Storage: {STORAGE_PATH})")
+    
+    # Install global post-commit hook
+    logger.info(f"HOOK_INSTALL: Configuring post-commit webhook to {API_URL}")
+    repo_manager.install_post_commit_hook(API_URL, API_KEY)
     
     # Start background sync
     sync_task = asyncio.create_task(periodic_sync())
@@ -343,9 +186,11 @@ async def lifespan(app: FastAPI):
     logger.info("DiffMem server shutting down...")
     sync_task.cancel()
     
-    # Final sync
+    # Final sync of all active contexts
     try:
-        await sync_to_github()
+        active_users = repo_manager.list_active_users()
+        for user_id in active_users:
+            await sync_user_to_github(user_id)
     except Exception as e:
         logger.error(f"Final sync error: {e}")
 
@@ -353,7 +198,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="DiffMem Server",
     description="Self-contained FastAPI server for DiffMem memory operations",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan
 )
 
@@ -371,23 +216,12 @@ app.add_middleware(
 async def onboard_user(user_id: str, request: OnboardUserRequest, authenticated: bool = Depends(verify_api_key)):
     """Onboard a new user to the memory system"""
     try:
-        # Check if user already exists/is onboarded
-        try:
-            existing_memory = get_memory_instance(user_id, allow_unboarded=True)
-            if existing_memory.is_onboarded():
-                return {
-                    "status": "error",
-                    "message": f"User {user_id} is already onboarded",
-                    "user_id": user_id,
-                    "timestamp": datetime.now().isoformat()
-                }
-        except:
-            # User doesn't exist, which is what we want for onboarding
-            pass
+        # Ensure worktree exists/is created (RepoManager handles creation)
+        user_repo_path = repo_manager.get_user_worktree(user_id)
         
         # Perform onboarding
         result = onboard_new_user(
-            str(REPO_PATH),
+            user_repo_path, # Pass the worktree path directly
             user_id,
             request.user_info,
             OPENROUTER_API_KEY,
@@ -400,7 +234,7 @@ async def onboard_user(user_id: str, request: OnboardUserRequest, authenticated:
             del memory_instances[user_id]
         
         # Trigger immediate sync
-        await sync_to_github(force=True)
+        await sync_user_to_github(user_id, force=True)
         
         if result.get('success'):
             return {
@@ -440,11 +274,13 @@ async def get_onboard_status(user_id: str, authenticated: bool = Depends(verify_
         }
     except Exception as e:
         logger.error(f"Onboard status check error for {user_id}: {e}")
+        # If we can't get memory instance, they probably aren't onboarded or repo issues
         return {
             "status": "success",
             "user_id": user_id,
             "onboarded": False,
-            "message": f"User {user_id} is not onboarded",
+            "message": f"User {user_id} is not onboarded or error accessing context",
+            "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
 
@@ -570,7 +406,6 @@ async def process_session(user_id: str, request: ProcessSessionRequest, authenti
     memory = get_memory_instance(user_id)
     
     try:
-        await pull_latest()
         memory.process_session(
             request.memory_input,
             request.session_id,
@@ -599,11 +434,10 @@ async def commit_session(user_id: str, request: CommitSessionRequest, authentica
     memory = get_memory_instance(user_id)
     
     try:
-        await pull_latest()
         memory.commit_session(request.session_id)
         
         # Trigger immediate sync
-        await sync_to_github(force=True)
+        await sync_user_to_github(user_id, force=True)
         
         return {
             "status": "success",
@@ -627,7 +461,6 @@ async def process_and_commit_session(user_id: str, request: ProcessSessionReques
     memory = get_memory_instance(user_id)
     
     try:
-        await pull_latest()
         memory.process_and_commit_session(
             request.memory_input,
             request.session_id,
@@ -635,7 +468,7 @@ async def process_and_commit_session(user_id: str, request: ProcessSessionReques
         )
         
         # Trigger immediate sync
-        await sync_to_github(force=True)
+        await sync_user_to_github(user_id, force=True)
         
         return {
             "status": "success",
@@ -654,6 +487,36 @@ async def process_and_commit_session(user_id: str, request: ProcessSessionReques
         )
 
 # Utility endpoints
+@app.post("/memory/{user_id}/webhook/post-commit")
+async def post_commit_webhook(user_id: str, authenticated: bool = Depends(verify_api_key)):
+    """
+    Webhook triggered by git post-commit hook.
+    Rebuilds indexes and syncs to remote.
+    """
+    logger.info(f"WEBHOOK_RECEIVED: post-commit for {user_id}")
+    memory = get_memory_instance(user_id)
+    
+    try:
+        # Sync to GitHub
+        await sync_user_to_github(user_id)
+        # Rebuild in-memory indexes to reflect new commit content
+        memory.rebuild_index()
+        
+        return {
+            "status": "success",
+            "message": "Post-commit actions completed: synced and rebuilt indexes",
+            "metadata": {
+                "user_id": user_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        logger.error(f"WEBHOOK_ERROR for {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Post-commit webhook failed: {str(e)}"
+        )
+
 @app.post("/memory/{user_id}/rebuild-index")
 async def rebuild_index(user_id: str, authenticated: bool = Depends(verify_api_key)):
     """Force rebuild of BM25 index"""
@@ -723,13 +586,18 @@ async def validate_setup(user_id: str, authenticated: bool = Depends(verify_api_
 # Server management
 @app.post("/server/sync")
 async def manual_sync(authenticated: bool = Depends(verify_api_key)):
-    """Manually trigger GitHub sync"""
+    """Manually trigger global sync (for all active users)"""
     try:
-        await pull_latest()
-        await sync_to_github(force=True)
+        active_users = repo_manager.list_active_users()
+        synced = []
+        for user_id in active_users:
+            await sync_user_to_github(user_id)
+            synced.append(user_id)
+            
         return {
             "status": "success",
-            "message": "Repository synced to GitHub",
+            "message": f"Synced {len(synced)} active users to GitHub",
+            "synced_users": synced,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -741,17 +609,16 @@ async def manual_sync(authenticated: bool = Depends(verify_api_key)):
 
 @app.get("/server/users")
 async def list_users(authenticated: bool = Depends(verify_api_key)):
-    """List available users in the repository"""
+    """List active users (with mounted worktrees)"""
     try:
-        users_dir = REPO_PATH / "users"
-        if not users_dir.exists():
-            return {"status": "success", "users": []}
-        
-        users = [d.name for d in users_dir.iterdir() if d.is_dir()]
+        # In this architecture, 'users' usually refers to active contexts
+        # To get all users ever, one would need to query the storage repo branches
+        active_users = repo_manager.list_active_users()
         return {
             "status": "success",
-            "users": users,
-            "count": len(users),
+            "users": active_users,
+            "count": len(active_users),
+            "note": "Lists currently mounted active contexts only",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -768,9 +635,10 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": "0.1.0",
-        "repo_path": str(REPO_PATH),
-        "active_users": len(memory_instances),
+        "version": "0.2.0",
+        "architecture": "orphan_branches_worktrees",
+        "active_contexts": len(memory_instances),
+        "storage_path": str(STORAGE_PATH),
         "github_repo": GITHUB_REPO_URL
     }
 
@@ -780,7 +648,7 @@ async def root():
     """Root endpoint with API information"""
     return {
         "service": "DiffMem Server",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "description": "Self-contained FastAPI server for DiffMem memory operations",
         "docs": "/docs",
         "health": "/health",
@@ -799,4 +667,4 @@ def main():
     )
 
 if __name__ == "__main__":
-    main() 
+    main()
