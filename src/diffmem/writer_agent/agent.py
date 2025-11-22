@@ -11,29 +11,32 @@ import logging
 import math
 from datetime import datetime, timedelta
 from pathlib import Path  
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from openai import OpenAI  
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class WriterAgent:  
     """Orchestrates the process of updating memory files based on a session."""  
 
-    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: str = "anthropic/claude-3-haiku", max_concurrent_llm_calls: int = 8):  
+    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: str = "anthropic/claude-3-haiku", max_concurrent_llm_calls: int = 8, validate_paths: bool = True):  
         self.repo_path = Path(repo_path)  
         self.user_id = user_id  
-        self.user_path = self.repo_path / "users" / user_id  
+        self.user_path = self.repo_path 
         self.user_file = self.user_path / f"{user_id}.md"  # Core user file at root of user folder  
         self.memories_path = self.user_path / "memories"  
         self.prompts_path = Path(__file__).parent / "prompts"  
         self.max_concurrent_llm_calls = max_concurrent_llm_calls  # Configurable concurrency limit
-        
-        if not self.user_path.exists():  
-            raise FileNotFoundError(f"User path not found: {self.user_path}")  
-        if not self.user_file.exists():  
-            raise FileNotFoundError(f"User file not found: {self.user_file}")
-        
-        self.repo = git.Repo(self.repo_path)  
         self.model = model  
+        
+        if validate_paths:
+            if not self.user_path.exists():  
+                raise FileNotFoundError(f"User path (worktree) not found: {self.user_path}")  
+            if not self.user_file.exists():  
+                raise FileNotFoundError(f"User file not found: {self.user_file}")
+            self.repo = git.Repo(self.repo_path)
+        else:
+            self.repo = None
+
         self.client = OpenAI(  
             base_url="https://openrouter.ai/api/v1",  
             api_key=openrouter_api_key,  
@@ -46,7 +49,32 @@ class WriterAgent:
         """Loads a prompt template from the prompts directory."""  
         prompt_file = self.prompts_path / f"{prompt_name}.txt"  
         with open(prompt_file, 'r', encoding='utf-8') as f:  
-            return f.read()  
+            return f.read()
+    
+    def _get_relative_entity_path(self, file_path: Path) -> str:
+        """
+        Calculates the canonical relative path from user_path root.
+        This ensures deterministic, consistent paths across the system.
+        
+        Args:
+            file_path: Absolute or relative Path object to an entity file
+            
+        Returns:
+            Standardized relative path string (e.g., 'memories/people/alex.md')
+        """
+        # Ensure we have an absolute path
+        if not file_path.is_absolute():
+            file_path = file_path.resolve()
+        
+        # Get relative path from user_path root
+        try:
+            rel_path = file_path.relative_to(self.user_path)
+            # Convert to forward slashes for consistency (cross-platform)
+            return str(rel_path).replace('\\', '/')
+        except ValueError:
+            # File is outside user_path, log warning and return name only
+            self.logger.warning(f"File {file_path} is outside user_path {self.user_path}")
+            return f"memories/unknown/{file_path.name}"  
 
     def _call_llm(self, system_prompt: str, prompt: str, is_json: bool = True, model = None) -> Any:  
         """Calls the LLM via OpenRouter, enforcing JSON mode if requested."""  
@@ -323,6 +351,111 @@ class WriterAgent:
                 'total_updates': 0
             }
 
+    def _load_master_index_lookup(self) -> Dict[str, str]:
+        """
+        Loads the master index and creates a name->path lookup dict.
+        Handles aliases and name variations.
+        
+        Returns:
+            Dict mapping entity names (and aliases) to file paths
+        """
+        index_file = self.user_path / 'index.md'
+        lookup = {}
+        
+        if not index_file.exists():
+            return lookup
+        
+        try:
+            with open(index_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Parse entity entries - look for JSON blocks after entity headers
+            import re
+            import ast
+            
+            # Pattern to match entity sections with JSON
+            pattern = r'### (.+?)\n.*?```\{(.+?)\}```'
+            matches = re.findall(pattern, content, re.DOTALL)
+            
+            for entity_title, json_str in matches:
+                try:
+                    # Clean up the JSON string and parse
+                    json_str = json_str.strip()
+                    if not json_str.startswith('{'):
+                        json_str = '{' + json_str
+                    if not json_str.endswith('}'):
+                        json_str = json_str + '}'
+                    
+                    entity_data = ast.literal_eval(json_str)
+                    
+                    if 'name' in entity_data and 'file' in entity_data:
+                        # Map primary name
+                        lookup[entity_data['name'].lower()] = entity_data['file']
+                        
+                        # Map all aliases
+                        for alias in entity_data.get('aliases', []):
+                            lookup[alias.lower()] = entity_data['file']
+                        
+                except Exception as e:
+                    self.logger.debug(f"Could not parse entity in index: {e}")
+                    continue
+        
+        except Exception as e:
+            self.logger.warning(f"Could not load master index for lookup: {e}")
+        
+        return lookup
+
+    def _resolve_entity_file_path(self, entity_name: str, entity_type: str) -> Optional[Path]:
+        """
+        Resolves an entity's file path using master index first, then filesystem fallback.
+        
+        Args:
+            entity_name: Name of the entity (e.g., "Benjamin Powell")
+            entity_type: Type of entity (e.g., "people", "contexts", "events")
+            
+        Returns:
+            Path object if found, None otherwise
+        """
+        # Strategy 1: Look up in master index (handles aliases and exact names)
+        index_lookup = self._load_master_index_lookup()
+        entity_name_lower = entity_name.lower()
+        
+        if entity_name_lower in index_lookup:
+            index_path = self.user_path / index_lookup[entity_name_lower]
+            if index_path.exists():
+                self.logger.debug(f"ENTITY_RESOLVED_INDEX: {entity_name} → {index_path}")
+                return index_path
+            else:
+                self.logger.warning(f"ENTITY_INDEX_STALE: {entity_name} index points to {index_path} but file not found")
+        
+        # Strategy 2: Try computed filename in expected folder
+        expected_filename = entity_name.lower().replace(' ', '_').replace('.', '') + '.md'
+        type_folders = {
+            'people': 'people', 'human': 'people',
+            'contexts': 'contexts', 'context': 'contexts',
+            'events': 'events', 'event': 'events',
+            'project': 'contexts', 'company': 'contexts',
+            'location': 'contexts', 'concept': 'contexts'
+        }
+        folder = type_folders.get(entity_type.lower(), 'contexts')
+        search_dir = self.memories_path / folder
+        
+        entity_file = search_dir / expected_filename
+        if entity_file.exists():
+            self.logger.debug(f"ENTITY_RESOLVED_COMPUTED: {entity_name} → {entity_file}")
+            return entity_file
+        
+        # Strategy 3: Fuzzy search across all memories
+        for md_file in self.memories_path.rglob('*.md'):
+            if '/sessions/' in str(md_file).replace('\\', '/'):
+                continue
+            if md_file.stem.lower() == entity_name.lower().replace(' ', '_').replace('.', ''):
+                self.logger.debug(f"ENTITY_RESOLVED_FUZZY: {entity_name} → {md_file}")
+                return md_file
+        
+        self.logger.warning(f"ENTITY_NOT_FOUND: Could not locate file for entity '{entity_name}' (type: {entity_type})")
+        return None
+
     def _update_existing_entities(self, memory_input: str, entities_to_update: List[Dict]):
         """STEP 2: Updates only the identified existing entity files in parallel."""
         if not entities_to_update:
@@ -334,20 +467,25 @@ class WriterAgent:
         prompt_template = self._load_prompt("3_update_entity_file")
         system_prompt = self._load_prompt("0_system")
         
-        # Build list of files to update based on provided file paths
+        # Build list of files to update - resolve paths from entity names
         files_to_update = [self.user_file]
         
         for entity in entities_to_update:
-            if 'file_path' in entity and entity['file_path']:
-                # Use the exact path provided by the LLM from core context
-                file_path = self.user_path / entity['file_path']
-                if file_path.exists():
-                    files_to_update.append(file_path)
-                    self.logger.debug(f"Found entity file: {entity['file_path']}")
-                else:
-                    self.logger.warning(f"Entity file not found: {entity['file_path']}")
+            entity_name = entity.get('name', '')
+            entity_type = entity.get('type', 'contexts')
+            
+            if not entity_name:
+                self.logger.warning(f"Entity missing name field: {entity}")
+                continue
+            
+            # Resolve file path deterministically from filesystem
+            file_path = self._resolve_entity_file_path(entity_name, entity_type)
+            
+            if file_path:
+                files_to_update.append(file_path)
+                self.logger.debug(f"Resolved entity '{entity_name}' to {file_path}")
             else:
-                self.logger.warning(f"No file_path provided for entity: {entity.get('name', 'unknown')}")
+                self.logger.warning(f"Could not resolve file path for entity: {entity_name}")
 
         unique_files = list(set(files_to_update))  # Remove duplicates
         if not unique_files:
@@ -467,13 +605,31 @@ class WriterAgent:
             # Get relative path from repo root
             rel_path = file_path.relative_to(self.repo_path)
             
+            # Check if the repo has any commits yet (handling fresh repos)
+            try:
+                self.repo.head.commit
+            except ValueError:
+                # Repo has no commits (empty/fresh)
+                return {
+                    'last_update': "New File",
+                    'number_of_edits': 1  # Count creation as first edit
+                }
+
             # Get last commit date for this file
-            last_commit = self.repo.git.log('-1', '--format=%ci', str(rel_path))
-            last_update = last_commit.strip() if last_commit else "Unknown"
-            
-            # Get number of commits that touched this file
-            commit_count = self.repo.git.rev_list('--count', 'HEAD', '--', str(rel_path))
-            number_of_edits = int(commit_count.strip()) if commit_count.strip() else 0
+            try:
+                last_commit = self.repo.git.log('-1', '--format=%ci', str(rel_path))
+                last_update = last_commit.strip() if last_commit else "Unknown"
+                
+                # Get number of commits that touched this file
+                commit_count = self.repo.git.rev_list('--count', 'HEAD', '--', str(rel_path))
+                number_of_edits = int(commit_count.strip()) if commit_count.strip() else 0
+            except git.exc.GitCommandError as e:
+                # If file is new and not committed yet, git log fails
+                if "does not have any commits yet" in str(e) or "ambiguous argument" in str(e):
+                    last_update = "New File"
+                    number_of_edits = 1
+                else:
+                    raise e
             
             return {
                 'last_update': last_update,
@@ -527,8 +683,8 @@ class WriterAgent:
         
         return '\n'.join(result_lines)
 
-    def _build_entity_indexes(self, file_path: Path):
-        """STEP 4: Builds semantic indexes for all modified entity files."""
+    def _build_single_entity_index(self, file_path: Path) -> Dict:
+        """Helper method to build semantic index for a single file (for parallel execution)."""
         try:
             # Read current file content
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -544,11 +700,14 @@ class WriterAgent:
                 git_stats['last_update']
             )
             
+            # Calculate deterministic file path (system-computed, not LLM-generated)
+            canonical_path = self._get_relative_entity_path(file_path)
+            
             # Build semantic index using LLM
             prompt_template = self._load_prompt("build_index")
             prompt = prompt_template.format(
                 file_content=content_without_index,
-                file_path=str(file_path.relative_to(self.user_path)),
+                file_path=canonical_path,
                 last_update=git_stats['last_update'],
                 number_of_edits=git_stats['number_of_edits'],
                 memory_strength=memory_strength
@@ -557,20 +716,75 @@ class WriterAgent:
             # Get semantic index JSON from LLM
             semantic_index_data = self._call_llm("", prompt, is_json=True)
             
+            # Override any LLM-generated 'file' path with the computed canonical path
+            semantic_index_data['file'] = canonical_path
+            
             # Convert to properly formatted JSON string
             semantic_index_json = json.dumps(semantic_index_data, separators=(',', ':'))
             
-            # Append semantic index to file
+            # Prepare updated content
             updated_content = content_without_index.rstrip() + '\n\n## SEMANTIC INDEX\n' + semantic_index_json + '\n'
             
-            # Write updated content
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(updated_content)
-            
-            self.logger.info(f"INDEX_UPDATED: Added semantic index to {file_path.name}")
+            return {
+                'success': True,
+                'file_path': file_path,
+                'content': updated_content,
+                'error': None
+            }
             
         except Exception as e:
-            self.logger.error(f"Failed to build index for {file_path}: {e}")
+            return {
+                'success': False,
+                'file_path': file_path,
+                'content': None,
+                'error': str(e)
+            }
+
+    def _build_entity_indexes(self, file_paths: List[Path]):
+        """STEP 5: Builds semantic indexes for modified entity files in parallel."""
+        if not file_paths:
+            self.logger.info("No files to index.")
+            return
+        
+        self.logger.info(f"Building semantic indexes for {len(file_paths)} modified files in parallel...")
+        
+        # Process files in parallel
+        max_workers = min(len(file_paths), self.max_concurrent_llm_calls)
+        results = []
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all indexing tasks
+            future_to_file = {
+                executor.submit(self._build_single_entity_index, file_path): file_path 
+                for file_path in file_paths
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    self.logger.error(f"Failed to build index for {file_path}: {e}")
+                    results.append({
+                        'success': False,
+                        'file_path': file_path,
+                        'error': str(e)
+                    })
+        
+        # Write all successful results to files
+        successful_indexes = 0
+        for result in results:
+            if result['success']:
+                with open(result['file_path'], 'w', encoding='utf-8') as f:
+                    f.write(result['content'])
+                self.logger.info(f"INDEX_UPDATED: Added semantic index to {result['file_path'].name}")
+                successful_indexes += 1
+            else:
+                self.logger.error(f"Failed to build index for {result['file_path']}: {result['error']}")
+        
+        self.logger.info(f"Successfully built {successful_indexes}/{len(file_paths)} indexes in parallel")
 
     def _rebuild_master_index(self):
         """STEP 5: Rebuilds the master index.md file with all memory entities."""
@@ -580,7 +794,7 @@ class WriterAgent:
         
         # Scan all markdown files in memories directory
         for md_file in self.memories_path.rglob('*.md'):
-            if md_file.name == 'index.md':  # Skip existing index files
+            if md_file.name == 'index.md' or '/sessions/' in str(md_file).replace('\\', '/'):  # Skip index and sessions
                 continue
                 
             try:
@@ -609,7 +823,18 @@ class WriterAgent:
                             semantic_data = json.loads(''.join(json_lines))
                             if len(semantic_data) < 2:
                                 self.logger.warning(f"Not enough semantic data found in {md_file}")
-                                self._build_entity_indexes(md_file)
+                                self._build_entity_indexes([md_file])
+                            
+                            # Override file path with computed canonical path
+                            # This ensures consistency even if the embedded index has wrong paths
+                            canonical_path = self._get_relative_entity_path(md_file)
+                            llm_path = semantic_data.get('file', '')
+                            
+                            if llm_path != canonical_path:
+                                self.logger.debug(f"PATH_MISMATCH: {md_file.name} index has '{llm_path}', correcting to '{canonical_path}'")
+                            
+                            semantic_data['file'] = canonical_path
+                            
                             git_stats = self._get_file_git_stats(md_file)
                             
                             # Add git metadata
@@ -625,7 +850,7 @@ class WriterAgent:
                             self.logger.warning(f"Could not parse semantic index in {md_file}: {e}")
                 else:
                     self.logger.warning(f"No semantic index found in {md_file}")
-                    self._build_entity_indexes(md_file)
+                    self._build_entity_indexes([md_file])
             except Exception as e:
                 self.logger.warning(f"Could not process {md_file} for master index: {e}")
         
@@ -672,6 +897,14 @@ Total entities: {len(index_entries)}
         if session_date is None:
             session_date = datetime.now().strftime('%Y-%m-%d')
         
+        # Archive raw session input for future replay/rebuild
+        sessions_dir = self.user_path / 'sessions'
+        sessions_dir.mkdir(exist_ok=True)
+        session_file = sessions_dir / f"{session_date}_{session_id}.txt"
+        with open(session_file, 'w', encoding='utf-8') as f:
+            f.write(memory_input)
+        self.logger.info(f"SESSION_ARCHIVED: {session_file.name}")
+        
         memory_input = memory_input.replace("{", "{{").replace("}", "}}")
         
         # Step 1: Identify all relevant entities
@@ -688,14 +921,10 @@ Total entities: {len(index_entries)}
         # Step 4: Create timeline entry
         self._create_timeline_entry(session_id, session_date, memory_input)
         
-        # Step 5: Build entity indexes for modified files
+        # Step 5: Build entity indexes for modified files in parallel
         modified_files = self._get_modified_files()
-        if not modified_files:
-            self.logger.info("No modified files to index.")
-        else:
-            self.logger.info(f"STEP 5: Building semantic indexes for {len(modified_files)} modified files...")
-            for file_path in modified_files:
-                self._build_entity_indexes(file_path)
+        self._build_entity_indexes(modified_files)
+        
         # Step 6: Rebuild master index
         self._rebuild_master_index()
         

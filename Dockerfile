@@ -24,10 +24,10 @@ COPY pyproject.toml ./
 RUN pip install -e .
 
 # Create directory for repository and initialize empty git repo
-RUN mkdir -p /app/memory_repo && \
+RUN mkdir -p /app/storage && \
+    mkdir -p /app/worktrees && \
     git config --global user.name "DiffMem" && \
-    git config --global user.email "diffmem@system.local" && \
-    git config --global init.defaultBranch main && \
+    git config --global user.email "diffmem@prodsystem.local" && \
     git config --global credential.helper "" && \
     git config --global http.postBuffer 524288000
 
@@ -40,7 +40,8 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 
 # Set environment variables
 ENV PYTHONPATH=/app/src
-ENV REPO_PATH=/app/memory_repo
+ENV STORAGE_PATH=/app/storage
+ENV WORKTREE_ROOT=/app/worktrees
 ENV SYNC_INTERVAL_MINUTES=5
 
 # Run the server

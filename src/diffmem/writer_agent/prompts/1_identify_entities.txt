@@ -23,9 +23,11 @@ Your JSON reply — valid, single-line summary in `summary`:
     {{"name":"somatic_anxiety_toolkit","type":"contexts","summary":"Daily breath-hold exercises program"}}
   ],
   "entities_to_update": [
-    {{"name":"Benjamin Powell","file_path":"memories/people/benjamin_powell.md"}}
+    {{"name":"Benjamin Powell","type":"people"}}
   ]
 }}
+
+NOTE: For entities_to_update, only provide name and type. The file path will be automatically resolved from the semantic index.
 
 If no entities need creation or updates, return empty lists: {{"entities_to_create": [], "entities_to_update": []}}
 

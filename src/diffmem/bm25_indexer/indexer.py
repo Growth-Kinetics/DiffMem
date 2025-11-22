@@ -67,7 +67,7 @@ def build_index(repo_path: str) -> Dict:
     all_blocks = []  
     path = Path(repo_path)  
     for md_file in path.rglob('*.md'):  
-        if 'repo_guide.md' in str(md_file) or 'index.md' in str(md_file): continue  # Skip guides  
+        if 'repo_guide.md' in str(md_file) or 'index.md' in str(md_file) or '/sessions/' in str(md_file).replace('\\', '/'): continue  # Skip guides and sessions  
         blocks = parse_blocks(str(md_file))  
         all_blocks.extend(blocks)  
     # Tokenize: Simple word split + lowercase (PoC; improve with NLTK later)  
