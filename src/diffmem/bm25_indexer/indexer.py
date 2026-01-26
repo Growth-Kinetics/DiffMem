@@ -72,8 +72,15 @@ def build_index(repo_path: str) -> Dict:
         all_blocks.extend(blocks)  
     # Tokenize: Simple word split + lowercase (PoC; improve with NLTK later)  
     tokens = [[word.lower() for word in block['content'].split()] for block in all_blocks]  
+    
+    # Handle empty index case (no blocks found)
+    if not tokens or len(tokens) == 0:
+        logger.warning("INDEX_EMPTY: No blocks found to index. Returning empty index.")
+        return {'bm25': None, 'corpus': [], 'tokens': []}
+    
     bm25 = BM25Okapi(tokens)  
-    logger.info(f"INDEX_BUILT: blocks={len(all_blocks)} tokens_avg={sum(len(t) for t in tokens)/len(tokens) if tokens else 0}")  
+    tokens_avg = sum(len(t) for t in tokens) / len(tokens) if tokens else 0
+    logger.info(f"INDEX_BUILT: blocks={len(all_blocks)} tokens_avg={tokens_avg}")  
     return {'bm25': bm25, 'corpus': all_blocks, 'tokens': tokens}  
 
 def search(index: Dict, query: str, k: int = 5) -> List[Dict]:  
@@ -84,6 +91,11 @@ def search(index: Dict, query: str, k: int = 5) -> List[Dict]:
     - Sort and return top-K snippets with metadata.  
     @returns: List[{'score': float, 'snippet': Dict (from corpus)}] sorted descending  
     """  
+    # Handle empty index
+    if not index.get('bm25') or not index.get('corpus') or len(index['corpus']) == 0:
+        logger.warning(f"SEARCH_EMPTY_INDEX: query={query} - No content indexed yet")
+        return []
+    
     query_tokens = [word.lower() for word in query.split()]  
     scores = index['bm25'].get_scores(query_tokens)  
     # Apply strength boost  

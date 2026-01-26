@@ -202,10 +202,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware
+# CORS middleware - configurable via environment
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "https://difmem.kingbarry.cc,http://192.168.60.108:8000").split(",")
+ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS else ["*"],  # Use configured origins or allow all
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
