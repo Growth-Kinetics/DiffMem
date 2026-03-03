@@ -9,6 +9,29 @@ DiffMem is a lightweight, git-based memory backend designed for AI agents and co
 
 At its core, DiffMem treats memory as a versioned repository: the "current state" of knowledge is stored in editable files, while historical changes are preserved in Git's commit graph. This separation allows agents to query and search against a compact, up-to-date surface without the overhead of historical data, while enabling deep dives into evolution when needed.
 
+## Live in Production
+
+DiffMem powers [Annabelle](https://withanna.io/), a simulated intelligence that maintains persistent memory across thousands of conversations on WhatsApp and Messenger.
+
+In production, DiffMem enables Annabelle to:
+
+- Reference details from conversations weeks ago
+- Track the evolution of relationships over time  
+- Build structured understanding of each person she talks to
+- Consolidate memories automatically as conversations grow
+
+→ [Try a conversation with Annabelle](https://wa.me/34641376527?text=Hi%20Annabelle,%20saw%20you%20on%20Github%20%E2%80%94%20I%E2%80%99d%20like%20to%20start.%20What%20should%20I%20tell%20you%20first%3F)
+→ [See how DiffMem processes a novel chapter by chapter](https://github.com/Growth-Kinetics/diffmem_sample_memory)
+
+## Roadmap
+
+- [ ] Indexing strategy from PoC needs to be made more robust, too memory intensive without need.
+- [ ] Parametrized method for context caps on retrieval.
+- [ ] Sometimes an entity will become a catch-all and the thing will insist in overloading it.
+- [ ] Retrieval History so that we can spin up a "linked entities" model to support wikification
+- [ ] PDF export.
+- [ ] Research PoC: Visual retrieval for context compression.
+
 ## Why Git for AI Memory?
 
 Traditional memory systems for AI agents often rely on databases, vector stores, or graph structures. These work well for certain scales but can become bloated or inefficient when dealing with long-term, evolving personal knowledge. DiffMem takes a different path by leveraging Git's strengths:
