@@ -129,13 +129,15 @@ class DiffMemory:
         ]
         return all(path.exists() for path in required_paths)
     
-    def onboard_user(self, user_info: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    def onboard_user(self, user_info: str, session_id: Optional[str] = None,
+                     template: str = None) -> Dict[str, Any]:
         """
         Onboard a new user by creating initial directory structure and files.
         
         Args:
             user_info: Raw information dump about the user
             session_id: Optional session ID for tracking
+            template: Pre-filled user entity markdown; bypasses LLM entity generation if provided
             
         Returns:
             Dict with onboarding results and metadata
@@ -155,7 +157,7 @@ class DiffMemory:
             self.model
         )
         
-        result = onboarding_agent.onboard_user(user_info, session_id)
+        result = onboarding_agent.onboard_user(user_info, session_id, template=template)
         
         # Reset components after onboarding
         if result.get('success'):
@@ -424,7 +426,8 @@ def create_memory_interface(repo_path: str, user_id: str,
 def onboard_new_user(repo_path: str, user_id: str, user_info: str,
                     openrouter_api_key: str = None, 
                     model: str = "google/gemini-2.5-pro",
-                    session_id: str = None) -> Dict[str, Any]:
+                    session_id: str = None,
+                    template: str = None) -> Dict[str, Any]:
     """
     Onboard a completely new user to the memory system.
     
@@ -435,6 +438,7 @@ def onboard_new_user(repo_path: str, user_id: str, user_info: str,
         openrouter_api_key: API key, or None to use OPENROUTER_API_KEY env var
         model: Model to use for onboarding
         session_id: Optional session ID for tracking
+        template: Pre-filled user entity markdown; bypasses LLM entity generation if provided
         
     Returns:
         Dict with onboarding results
@@ -448,7 +452,7 @@ def onboard_new_user(repo_path: str, user_id: str, user_info: str,
     memory = DiffMemory(repo_path, user_id, openrouter_api_key, model, auto_onboard=True)
     
     # Perform onboarding
-    return memory.onboard_user(user_info, session_id)
+    return memory.onboard_user(user_info, session_id, template=template)
 
 
 def quick_search(repo_path: str, query: str, k: int = 5) -> List[Dict[str, Any]]:

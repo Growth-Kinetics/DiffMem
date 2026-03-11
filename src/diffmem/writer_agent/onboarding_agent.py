@@ -41,22 +41,24 @@ class OnboardingAgent(WriterAgent):
         # Assuming the path is already a git worktree or repo
         self.repo = git.Repo(self.user_path)
 
-    def _create_initial_user_file(self, user_info: str) -> str:
-        """Creates the main user entity file from the information dump."""
+    def _create_initial_user_file(self, user_info: str, template: str = None) -> str:
+        """Creates the main user entity file from a template or the information dump."""
         self.logger.info("Creating initial user entity file...")
         
-        # Load system prompt and onboarding prompt
-        system_prompt = self._load_prompt("0_system")
-        onboarding_prompt_template = self._load_prompt("onboard_user_entity")
+        if template:
+            self.logger.info("Using provided template for user entity file")
+            user_content = template
+        else:
+            system_prompt = self._load_prompt("0_system")
+            onboarding_prompt_template = self._load_prompt("onboard_user_entity")
+            
+            onboarding_prompt = onboarding_prompt_template.format(
+                user_id=self.user_id,
+                user_info=user_info
+            )
+            
+            user_content = self._call_llm(system_prompt, onboarding_prompt, is_json=False)
         
-        onboarding_prompt = onboarding_prompt_template.format(
-            user_id=self.user_id,
-            user_info=user_info
-        )
-        
-        user_content = self._call_llm(system_prompt, onboarding_prompt, is_json=False)
-        
-        # Write the user file
         with open(self.user_file, 'w', encoding='utf-8') as f:
             f.write(user_content)
         
@@ -120,13 +122,15 @@ class OnboardingAgent(WriterAgent):
         # Delegate to parent's parallelized method (DRY)
         self._build_entity_indexes(md_files)
     
-    def onboard_user(self, user_info: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    def onboard_user(self, user_info: str, session_id: Optional[str] = None,
+                     template: str = None) -> Dict[str, Any]:
         """
         Complete onboarding process for a new user.
         
         Args:
             user_info: Raw information dump about the user
             session_id: Optional session ID for tracking
+            template: Pre-filled user entity markdown; bypasses LLM entity generation if provided
             
         Returns:
             Dict with onboarding results and metadata
@@ -141,18 +145,19 @@ class OnboardingAgent(WriterAgent):
             self._create_directory_structure()
             
             # Step 2: Create main user file
-            user_content = self._create_initial_user_file(user_info)
+            user_content = self._create_initial_user_file(user_info, template=template)
             
             # Step 3: Identify and create initial entities
-            entity_analysis = self._identify_initial_entities(user_info)
+            # Use user_info if available, fall back to template content for entity extraction
+            entity_context = user_info or user_content
+            entity_analysis = self._identify_initial_entities(entity_context)
             entities_to_create = entity_analysis.get('entities_to_create', [])
             
             # Reuse WriterAgent's parallel entity creation
-            # Note: _create_new_entities expects memory_input to be the context (user_info here)
-            self._create_new_entities(user_info, entities_to_create)
+            self._create_new_entities(entity_context, entities_to_create)
             
             # Step 4: Create initial timeline entry
-            self._create_initial_timeline_entry(user_info, session_id)
+            self._create_initial_timeline_entry(entity_context, session_id)
             
             # Step 5: Build semantic indexes
             self._build_initial_semantic_indexes()
@@ -172,6 +177,7 @@ class OnboardingAgent(WriterAgent):
                 'success': True,
                 'user_id': self.user_id,
                 'session_id': session_id,
+                'template_used': template is not None,
                 'entities_created': len(entities_to_create),
                 'files_created': {
                     'user_file': str(self.user_file),

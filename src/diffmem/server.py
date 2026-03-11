@@ -102,6 +102,7 @@ class CommitSessionRequest(BaseModel):
 class OnboardUserRequest(BaseModel):
     user_info: str = Field(..., description="Raw information dump about the user")
     session_id: Optional[str] = Field(None, description="Optional session ID for tracking")
+    template: Optional[str] = Field(None, description="Pre-filled user entity markdown. If provided, bypasses LLM entity generation.")
 
 def get_memory_instance(user_id: str, allow_unboarded: bool = False) -> DiffMemory:
     """Get or create DiffMemory instance for user, ensuring worktree is mounted."""    
@@ -229,7 +230,8 @@ async def onboard_user(user_id: str, request: OnboardUserRequest, authenticated:
             request.user_info,
             OPENROUTER_API_KEY,
             DEFAULT_MODEL,
-            request.session_id
+            request.session_id,
+            template=request.template
         )
         
         # Clear any cached instances so they get recreated with proper onboarded state
