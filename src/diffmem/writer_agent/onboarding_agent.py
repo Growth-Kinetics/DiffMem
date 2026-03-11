@@ -148,8 +148,8 @@ class OnboardingAgent(WriterAgent):
             user_content = self._create_initial_user_file(user_info, template=template)
             
             # Step 3: Identify and create initial entities
-            # Use user_info if available, fall back to template content for entity extraction
-            entity_context = user_info or user_content
+            # When a template is provided, the template is the single source of truth
+            entity_context = user_content if template else user_info
             entity_analysis = self._identify_initial_entities(entity_context)
             entities_to_create = entity_analysis.get('entities_to_create', [])
             
