@@ -1,21 +1,15 @@
-# CAPABILITY: Main API interface for DiffMem - module-driven memory operations
-# INPUTS: repo_path, user_id, openrouter_api_key for initialization
-# OUTPUTS: Structured memory operations via DiffMemory class
-# CONSTRAINTS: No servers/endpoints - direct import and use in chat agents
-
 import os
 import logging
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
-from .context_manager.agent import ContextManager, ContextRequest
 from .writer_agent.agent import WriterAgent
 from .writer_agent.onboarding_agent import OnboardingAgent
-from .bm25_indexer.api import build_index, search
-from .searcher_agent.agent import orchestrate_query
+from .retrieval_agent.baseline import load_baseline, load_always_load_for_entities, load_user_entity, load_recent_timeline
+from .retrieval_agent.agent import run_retrieval_agent, LLMConfig
+from .retrieval_agent.resolver import resolve_pointers
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -23,73 +17,44 @@ logger = logging.getLogger(__name__)
 class DiffMemory:
     """
     Main API interface for DiffMem memory operations.
-    
+
     Provides clean read/write access to differential memory without servers or endpoints.
     Can be imported directly into chat agents for immediate use.
-    
+
     Usage:
         memory = DiffMemory("/path/to/repo", "alex", "your-openrouter-key")
-        
+
         # Read operations
-        context = memory.get_context(conversation, depth="basic")
-        results = memory.search("relationship dynamics")
-        
-        # Write operations  
+        context = memory.get_context(conversation, max_tokens=15000)
+        entity = memory.get_user_entity()
+
+        # Write operations
         memory.process_session("Had coffee with mom today...", "session-123")
         memory.commit_session("session-123")
     """
-    
-    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, 
+
+    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str,
                  model: str = "google/gemini-2.5-pro", auto_onboard: bool = False,
                  max_concurrent_llm_calls: int = 8):
-        """
-        Initialize DiffMemory for a specific user and repository.
-        
-        Args:
-            repo_path: Path to the git repository containing memory files
-            user_id: User identifier (must exist in users/ directory unless auto_onboard=True)
-            openrouter_api_key: API key for OpenRouter LLM access
-            model: Default model for LLM operations
-            auto_onboard: If True, will create user structure if it doesn't exist
-            max_concurrent_llm_calls: Maximum number of concurrent LLM calls for parallel processing
-        """
         self.repo_path = Path(repo_path)
         self.user_id = user_id
         self.openrouter_api_key = openrouter_api_key
         self.model = model
         self.max_concurrent_llm_calls = max_concurrent_llm_calls
-        
-        # Validate paths
+
         self.user_path = self.repo_path
         if not self.user_path.exists():
             if auto_onboard:
                 logger.info(f"User path not found, auto_onboard enabled: {self.user_path}")
-                # Don't raise error, will be handled by onboarding
             else:
                 raise FileNotFoundError(f"User path not found: {self.user_path}")
-        
-        # Initialize components
-        self._context_manager = None
+
         self._writer_agent = None
-        self._bm25_index = None
-        
+
         logger.info(f"DIFFMEM_INIT: repo={repo_path} user={user_id}")
-    
-    @property
-    def context_manager(self) -> ContextManager:
-        """Lazy initialization of context manager"""
-        if self._context_manager is None:
-            self._context_manager = ContextManager(
-                str(self.repo_path), 
-                self.user_id, 
-                self.openrouter_api_key,
-                self.model
-            )
-        return self._context_manager
-    
+
     @property
     def writer_agent(self) -> WriterAgent:
-        """Lazy initialization of writer agent"""
         if self._writer_agent is None:
             self._writer_agent = WriterAgent(
                 str(self.repo_path),
@@ -99,49 +64,18 @@ class DiffMemory:
                 self.max_concurrent_llm_calls
             )
         return self._writer_agent
-    
-    @property
-    def bm25_index(self) -> Dict:
-        """Lazy initialization of BM25 index"""
-        if self._bm25_index is None:
-            logger.info("Building BM25 index...")
-            self._bm25_index = build_index(str(self.repo_path))
-        return self._bm25_index
-    
-    def rebuild_index(self) -> None:
-        """Force rebuild of BM25 index (call after memory updates)"""
-        logger.info("Rebuilding indexes...")
-        self._bm25_index = build_index(str(self.repo_path))
-        
-        # Rebuild context manager indexes (embeddings)
-        # Access via property to ensure it's initialized, then rebuild
-        try:
-            self.context_manager.rebuild_indexes()
-        except Exception as e:
-            logger.warning(f"Could not rebuild context manager indexes: {e}")
-    
+
     def is_onboarded(self) -> bool:
-        """Check if user has been properly onboarded"""
         required_paths = [
             self.user_path,
             self.user_path / f"{self.user_id}.md",
             self.user_path / "memories"
         ]
         return all(path.exists() for path in required_paths)
-    
+
     def onboard_user(self, user_info: str, session_id: Optional[str] = None,
                      template: str = None) -> Dict[str, Any]:
-        """
-        Onboard a new user by creating initial directory structure and files.
-        
-        Args:
-            user_info: Raw information dump about the user
-            session_id: Optional session ID for tracking
-            template: Pre-filled user entity markdown; bypasses LLM entity generation if provided
-            
-        Returns:
-            Dict with onboarding results and metadata
-        """
+        """Onboard a new user by creating initial directory structure and files."""
         if self.is_onboarded():
             return {
                 'success': False,
@@ -149,168 +83,208 @@ class DiffMemory:
                 'user_id': self.user_id,
                 'timestamp': datetime.now().isoformat()
             }
-        
+
         onboarding_agent = OnboardingAgent(
             str(self.repo_path),
             self.user_id,
             self.openrouter_api_key,
             self.model
         )
-        
+
         result = onboarding_agent.onboard_user(user_info, session_id, template=template)
-        
-        # Reset components after onboarding
+
         if result.get('success'):
-            self._context_manager = None
             self._writer_agent = None
-            self._bm25_index = None
-        
+
         return result
-    
+
     # READ OPERATIONS
-    
-    def get_context(self, conversation: List[Dict[str, str]], 
-                   depth: str = "basic") -> Dict[str, Any]:
+
+    def get_context(self, conversation: List[Dict[str, str]],
+                    max_tokens: int = 20000,
+                    max_turns: int = 6,
+                    timeout_seconds: int = 120,
+                    baseline_only: bool = False) -> Dict[str, Any]:
         """
-        Get assembled context for a conversation.
-        
+        Git-native agent retrieval. The agent explores the git repository
+        and builds targeted context for the conversation.
+
         Args:
-            conversation: List of message dicts [{'role': 'user', 'content': '...'}, ...]
-            depth: Context depth - "basic", "wide", "deep", or "temporal"
-                  - basic: Top entities with ALWAYS_LOAD blocks
-                  - wide: Semantic search with ALWAYS_LOAD blocks  
-                  - deep: Complete entity files
-                  - temporal: Complete files with Git blame history
-        
+            conversation: List of message dicts [{'role': 'user', 'content': '...'}]
+            max_tokens: Agent's additional context token budget
+            max_turns: Max agent exploration turns
+            timeout_seconds: Hard timeout for the agent loop
+            baseline_only: If True, skip the agent entirely and return just
+                          the user entity + recent timeline. Zero LLM tokens.
+
         Returns:
-            Dict containing:
-            - always_load_blocks: Core memory blocks
+            Dict with:
+            - user_entity: The user's core profile
             - recent_timeline: Recent timeline entries
-            - session_metadata: Context assembly metadata
-            - complete_entities: Full entity files (deep/temporal mode)
-            - temporal_blame: Git history data (temporal mode)
+            - agent_context: Targeted blocks discovered by the agent
+            - always_load_blocks: Core identity blocks for identified entities
+            - retrieval_plan: Agent's reasoning and pointer details
+            - session_metadata: Token accounting and timing
         """
         if not self.is_onboarded():
             raise ValueError(f"User {self.user_id} has not been onboarded. Call onboard_user() first.")
-        
-        return self.context_manager.get_session_context(conversation, depth)
-    
-    def search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
-        """
-        Direct BM25 search over memory blocks.
-        
-        Args:
-            query: Search query string
-            k: Number of results to return
-            
-        Returns:
-            List of dicts with 'score' and 'snippet' keys
-        """
-        return search(self.bm25_index, query, k)
-    
-    def orchestrated_search(self, conversation: List[Dict[str, str]], 
-                           model: str = None, k: int = 5) -> Dict[str, Any]:
-        """
-        LLM-orchestrated search from conversation context.
-        
-        Args:
-            conversation: List of message dicts
-            model: Override default model for search
-            k: Number of results per search term
-            
-        Returns:
-            Dict with 'response', 'snippets', and 'derived_query' keys
-        """
-        search_model = model or self.model
-        return orchestrate_query(conversation, self.bm25_index, search_model, k)
-    
+
+        baseline = load_baseline(str(self.repo_path), self.user_id)
+        baseline_tokens = baseline["total_tokens"]
+
+        if baseline_only:
+            return {
+                "user_entity": baseline["user_entity"],
+                "recent_timeline": baseline["timeline"],
+                "agent_context": [],
+                "always_load_blocks": [],
+                "retrieval_plan": {
+                    "synthesis": "Baseline only -- agent skipped",
+                    "entities_identified": [],
+                    "pointers": [],
+                    "agent_turns": 0,
+                    "agent_elapsed_ms": 0,
+                },
+                "session_metadata": {
+                    "user_id": self.user_id,
+                    "retrieval_version": "baseline_only",
+                    "max_tokens": 0,
+                    "baseline_tokens": baseline_tokens,
+                    "agent_tokens": 0,
+                    "always_load_tokens": 0,
+                    "total_tokens": baseline_tokens,
+                    "agent_ms": 0,
+                    "timestamp": datetime.now().isoformat(),
+                },
+            }
+
+        try:
+            plan = run_retrieval_agent(
+                worktree_path=str(self.repo_path),
+                user_id=self.user_id,
+                conversation=conversation,
+                max_tokens=max_tokens,
+                baseline_tokens=baseline_tokens,
+                max_turns=max_turns,
+                timeout_seconds=timeout_seconds,
+            )
+
+            agent_blocks = resolve_pointers(
+                plan=plan,
+                worktree_path=str(self.repo_path),
+                token_budget=max_tokens,
+            )
+
+            agent_tokens = sum(b["tokens"] for b in agent_blocks)
+            al_budget = max(1000, max_tokens - agent_tokens)
+            always_load = load_always_load_for_entities(
+                str(self.repo_path),
+                plan.entities_identified,
+                max_tokens=al_budget,
+            )
+
+            return {
+                "user_entity": baseline["user_entity"],
+                "recent_timeline": baseline["timeline"],
+                "agent_context": agent_blocks,
+                "always_load_blocks": always_load,
+                "retrieval_plan": {
+                    "synthesis": plan.synthesis,
+                    "entities_identified": plan.entities_identified,
+                    "pointers": [
+                        {"type": p.type, "path": p.path, "git_cmd": p.git_cmd,
+                         "reason": p.reason, "priority": p.priority, "est_tokens": p.est_tokens}
+                        for p in plan.pointers
+                    ],
+                    "agent_turns": plan.agent_turns,
+                    "agent_elapsed_ms": plan.total_elapsed_ms,
+                },
+                "session_metadata": {
+                    "user_id": self.user_id,
+                    "retrieval_version": "agent",
+                    "max_tokens": max_tokens,
+                    "baseline_tokens": baseline_tokens,
+                    "agent_tokens": agent_tokens,
+                    "always_load_tokens": sum(b["tokens"] for b in always_load),
+                    "total_tokens": baseline_tokens + agent_tokens + sum(b["tokens"] for b in always_load),
+                    "agent_ms": plan.total_elapsed_ms,
+                    "timestamp": datetime.now().isoformat(),
+                },
+            }
+
+        except Exception as e:
+            logger.error(f"CONTEXT_AGENT_FAILED: {e} -- falling back to baseline")
+            return {
+                "user_entity": baseline["user_entity"],
+                "recent_timeline": baseline["timeline"],
+                "agent_context": [],
+                "always_load_blocks": [],
+                "retrieval_plan": {
+                    "synthesis": f"Agent failed: {e}",
+                    "entities_identified": [],
+                    "pointers": [],
+                    "agent_turns": 0,
+                    "agent_elapsed_ms": 0,
+                },
+                "session_metadata": {
+                    "user_id": self.user_id,
+                    "retrieval_version": "fallback",
+                    "max_tokens": max_tokens,
+                    "baseline_tokens": baseline_tokens,
+                    "agent_tokens": 0,
+                    "always_load_tokens": 0,
+                    "total_tokens": baseline_tokens,
+                    "agent_ms": 0,
+                    "timestamp": datetime.now().isoformat(),
+                },
+            }
+
     def get_user_entity(self) -> Dict[str, Any]:
-        """
-        Get the complete user entity file.
-        
-        Returns:
-            Dict with user entity content and metadata
-        """
+        """Get the complete user entity file."""
         if not self.is_onboarded():
             raise ValueError(f"User {self.user_id} has not been onboarded. Call onboard_user() first.")
-        
-        return self.context_manager._load_complete_user_entity()
-    
+        return load_user_entity(str(self.repo_path), self.user_id)
+
     def get_recent_timeline(self, days_back: int = 30) -> List[Dict[str, Any]]:
-        """
-        Get recent timeline entries.
-        
-        Args:
-            days_back: Number of days to look back
-            
-        Returns:
-            List of timeline entry dicts
-        """
+        """Get recent timeline entries."""
         if not self.is_onboarded():
             raise ValueError(f"User {self.user_id} has not been onboarded. Call onboard_user() first.")
-        
-        return self.context_manager._load_recent_timeline(self.user_path, days_back)
-    
+        return load_recent_timeline(str(self.repo_path), days_back)
+
     # WRITE OPERATIONS
-    
-    def process_session(self, memory_input: str, session_id: str, 
+
+    def process_session(self, memory_input: str, session_id: str,
                        session_date: str = None) -> None:
         """
         Process a session transcript and stage memory updates.
-        
-        This analyzes the input, creates/updates entity files, and stages all changes
-        in git working directory. No commit is made until commit_session() is called.
-        
-        Args:
-            memory_input: Raw session transcript or memory content
-            session_id: Unique session identifier  
-            session_date: Date string (YYYY-MM-DD), defaults to today
+
+        Analyzes input, creates/updates entity files, and stages all changes
+        in git working directory. No commit until commit_session() is called.
         """
         if not self.is_onboarded():
             raise ValueError(f"User {self.user_id} has not been onboarded. Call onboard_user() first.")
-        
+
         if session_date is None:
             session_date = datetime.now().strftime('%Y-%m-%d')
-            
+
         self.writer_agent.process_session(memory_input, session_id, session_date)
-        
-        # Rebuild index after processing to reflect changes
-        self.rebuild_index()
-    
+
     def commit_session(self, session_id: str) -> None:
-        """
-        Commit all staged changes for a session.
-        
-        Args:
-            session_id: Session identifier to commit
-        """
+        """Commit all staged changes for a session."""
         if not self.is_onboarded():
             raise ValueError(f"User {self.user_id} has not been onboarded. Call onboard_user() first.")
-        
         self.writer_agent.commit_session(session_id)
-    
+
     def process_and_commit_session(self, memory_input: str, session_id: str,
                                   session_date: str = None) -> None:
-        """
-        Convenience method to process and immediately commit a session.
-        
-        Args:
-            memory_input: Raw session transcript or memory content
-            session_id: Unique session identifier
-            session_date: Date string (YYYY-MM-DD), defaults to today
-        """
+        """Convenience method to process and immediately commit a session."""
         self.process_session(memory_input, session_id, session_date)
         self.commit_session(session_id)
-    
+
     # UTILITY OPERATIONS
-    
+
     def get_repo_status(self) -> Dict[str, Any]:
-        """
-        Get current repository status and statistics.
-        
-        Returns:
-            Dict with repo stats, index info, and user metadata
-        """
+        """Get current repository status and statistics."""
         if not self.is_onboarded():
             return {
                 'repo_path': str(self.repo_path),
@@ -318,38 +292,25 @@ class DiffMemory:
                 'onboarded': False,
                 'error': 'User has not been onboarded'
             }
-        
-        index_stats = {
-            'total_blocks': len(self.bm25_index['corpus']),
-            'avg_tokens': sum(len(t) for t in self.bm25_index['tokens']) / len(self.bm25_index['tokens']) if self.bm25_index['tokens'] else 0
-        }
-        
-        # Count memory files
+
         memories_path = self.user_path / "memories"
         memory_files = list(memories_path.rglob('*.md')) if memories_path.exists() else []
-        
+
         return {
             'repo_path': str(self.repo_path),
             'user_id': self.user_id,
             'user_path': str(self.user_path),
             'onboarded': True,
-            'index_stats': index_stats,
             'memory_files_count': len(memory_files),
             'has_timeline': (self.user_path / "timeline").exists(),
             'has_master_index': (self.user_path / "index.md").exists()
         }
-    
+
     def validate_setup(self) -> Dict[str, Any]:
-        """
-        Validate that the memory setup is correct and complete.
-        
-        Returns:
-            Dict with validation results and any issues found
-        """
+        """Validate that the memory setup is correct and complete."""
         issues = []
         warnings = []
-        
-        # Check if onboarded
+
         if not self.is_onboarded():
             issues.append("User has not been onboarded")
             return {
@@ -360,32 +321,28 @@ class DiffMemory:
                 'user_id': self.user_id,
                 'repo_path': str(self.repo_path)
             }
-        
-        # Check required paths
+
         required_paths = [
             self.user_path,
             self.user_path / f"{self.user_id}.md",
             self.user_path / "memories"
         ]
-        
+
         for path in required_paths:
             if not path.exists():
                 issues.append(f"Missing required path: {path}")
-        
-        # Check for master index
+
         master_index = self.user_path / "index.md"
         if not master_index.exists():
             warnings.append("No master index found - will be created on first write operation")
-        
-        # Check timeline directory
+
         timeline_dir = self.user_path / "timeline"
         if not timeline_dir.exists():
             warnings.append("No timeline directory found - will be created on first timeline entry")
-        
-        # Validate API key
+
         if not self.openrouter_api_key:
             issues.append("No OpenRouter API key provided")
-        
+
         return {
             'valid': len(issues) == 0,
             'onboarded': True,
@@ -396,76 +353,29 @@ class DiffMemory:
         }
 
 
-# Convenience functions for quick access
+# Convenience functions
 
-def create_memory_interface(repo_path: str, user_id: str, 
+def create_memory_interface(repo_path: str, user_id: str,
                           openrouter_api_key: str = None,
                           model: str = "google/gemini-2.5-pro",
                           auto_onboard: bool = False) -> DiffMemory:
-    """
-    Convenience function to create a DiffMemory interface.
-    
-    Args:
-        repo_path: Path to memory repository
-        user_id: User identifier
-        openrouter_api_key: API key, or None to use OPENROUTER_API_KEY env var
-        model: Default model for operations
-        auto_onboard: If True, will allow initialization even if user doesn't exist
-        
-    Returns:
-        Configured DiffMemory instance
-    """
+    """Convenience function to create a DiffMemory interface."""
     if openrouter_api_key is None:
         openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
         if not openrouter_api_key:
             raise ValueError("OpenRouter API key must be provided or set in OPENROUTER_API_KEY env var")
-    
     return DiffMemory(repo_path, user_id, openrouter_api_key, model, auto_onboard)
 
 
 def onboard_new_user(repo_path: str, user_id: str, user_info: str,
-                    openrouter_api_key: str = None, 
+                    openrouter_api_key: str = None,
                     model: str = "google/gemini-2.5-pro",
                     session_id: str = None,
                     template: str = None) -> Dict[str, Any]:
-    """
-    Onboard a completely new user to the memory system.
-    
-    Args:
-        repo_path: Path to memory repository
-        user_id: New user identifier
-        user_info: Raw information dump about the user
-        openrouter_api_key: API key, or None to use OPENROUTER_API_KEY env var
-        model: Model to use for onboarding
-        session_id: Optional session ID for tracking
-        template: Pre-filled user entity markdown; bypasses LLM entity generation if provided
-        
-    Returns:
-        Dict with onboarding results
-    """
+    """Onboard a completely new user to the memory system."""
     if openrouter_api_key is None:
         openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
         if not openrouter_api_key:
             raise ValueError("OpenRouter API key must be provided or set in OPENROUTER_API_KEY env var")
-    
-    # Create memory interface with auto_onboard to allow initialization
     memory = DiffMemory(repo_path, user_id, openrouter_api_key, model, auto_onboard=True)
-    
-    # Perform onboarding
     return memory.onboard_user(user_info, session_id, template=template)
-
-
-def quick_search(repo_path: str, query: str, k: int = 5) -> List[Dict[str, Any]]:
-    """
-    Quick search without full initialization (index-only).
-    
-    Args:
-        repo_path: Path to memory repository
-        query: Search query
-        k: Number of results
-        
-    Returns:
-        Search results
-    """
-    index = build_index(repo_path)
-    return search(index, query, k) 

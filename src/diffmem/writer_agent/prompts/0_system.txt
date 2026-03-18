@@ -6,14 +6,14 @@
 This network of prompts represent the DiffMem Service, here is the DiffMem Project in one breath:
 - Ultra-light, Git-backed external hippocampus using human-readable Markdown.  
 - Goal: external storage for neurodivergent or ageing users → editable “current-state” blocks, full history via Git diff.  
-- Retrieval: in-memory BM25 keyword index rebuilt on start; <160-token JSON index line appended to every entity file for instant triage.  
+- Retrieval: git-native agent explores the repo via git commands; <160-token JSON index line appended to every entity file for instant triage.  
 - Structure: users/{{person}}/memories/{{people, contexts, timeline}}/<entity>.md  
   – people : lifelong identity & relationships.  
   – contexts : themes, projects, organizations (static or slowly evolving).  
   – events : discrete, date-stamped milestones (timeline/YYYY-MM-DD_event-slug.md).  
 - Strength tag (High|Medium|Low) simulates synaptic weight by edit frequency.  
 - Commit style: atomic per session; monthly merge memory/YYYY-MM → main.  
-- Retrieval pattern: LLM first consults the 160-char entity JSON line; if match, loads full MD block.  
+- Retrieval pattern: agent reads index.md, probes git history, then prescribes targeted file sections and diffs to load.  
 - Reject noise: skip single-mention ephemera (“kitkats”) → keep focused corpus.
 
 [COMPETENCE MAPS]

@@ -6,7 +6,7 @@ Project recap you must keep in mind
 DiffMem stores memories in Git-Markdown only (no DB).
 Each user/agent has a folder: users/<name>/{{people, contexts, timeline}}/<entity>.md
 We favour "current-state editable blocks"; history lives in git diffs.
-Retrieval is BM25 over plaintext; indexes speed up that lookup.
+Retrieval is agent-driven via git commands; indexes speed up entity discovery.
 Readability & commit-size must stay tiny for memory-challenged users → strict token cap.
 
 Git Statistics for this file:

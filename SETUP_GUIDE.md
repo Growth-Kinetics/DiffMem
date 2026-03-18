@@ -8,7 +8,7 @@ DiffMem is a **Git-based differential memory system** for AI agents. It stores m
 
 1. **Current State Focus**: Only current memories are stored in files (not full history), keeping things lightweight
 2. **Git History**: All changes are tracked via Git commits, allowing you to see how memories evolved
-3. **BM25 Search**: Fast, explainable search over memory content
+3. **Agent Retrieval**: An LLM agent explores the git repo (grep, git log, git diff) to build targeted context
 4. **Multi-User Architecture**: Each user gets an isolated "orphan branch" in Git, completely separate from others
 5. **Worktree System**: Active users have their memory "mounted" in a worktree directory for operations
 
@@ -146,7 +146,7 @@ memory = DiffMemory(
 )
 
 # Use it
-context = memory.get_context(conversation, depth="basic")
+context = memory.get_context(conversation, max_tokens=15000)
 ```
 
 ## How to Interact with DiffMem
@@ -214,7 +214,7 @@ memory.commit_session("session-001")
 
 ### 3. Retrieve Context for Conversations
 
-When you need context for an AI conversation:
+When you need context for an AI conversation, the retrieval agent explores the git repository to find relevant entity sections, diffs, and temporal patterns:
 
 **Via API:**
 ```bash
@@ -225,15 +225,15 @@ curl -X POST "http://localhost:8000/memory/alex/context" \
     "conversation": [
       {"role": "user", "content": "Tell me about my relationship with my mom"}
     ],
-    "depth": "deep"
+    "max_tokens": 15000
   }'
 ```
 
-**Depth Options:**
-- `basic`: Top entities with ALWAYS_LOAD blocks (fastest, minimal context)
-- `wide`: Semantic search with ALWAYS_LOAD blocks (balanced)
-- `deep`: Complete entity files (comprehensive)
-- `temporal`: Complete files with Git blame history (most detailed)
+**Parameters:**
+- `conversation` (required) - Conversation history as message dicts
+- `max_tokens` (default: 20000) - Agent's additional context token budget
+- `max_turns` (default: 4) - Max agent exploration turns
+- `timeout_seconds` (default: 30) - Hard timeout for the agent loop
 
 **Via Python:**
 ```python
@@ -241,44 +241,8 @@ conversation = [
     {"role": "user", "content": "Tell me about my relationship with my mom"}
 ]
 
-context = memory.get_context(conversation, depth="deep")
+context = memory.get_context(conversation, max_tokens=15000)
 print(context)
-```
-
-### 4. Search Memories
-
-**Via API:**
-```bash
-curl -X POST "http://localhost:8000/memory/alex/search" \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "coffee with mom",
-    "k": 5
-  }'
-```
-
-**Via Python:**
-```python
-results = memory.search("coffee with mom", k=5)
-for result in results:
-    print(f"Score: {result['score']}, Snippet: {result['snippet']}")
-```
-
-### 5. LLM-Orchestrated Search
-
-Let the LLM figure out what to search for based on conversation:
-
-**Via API:**
-```bash
-curl -X POST "http://localhost:8000/memory/alex/orchestrated-search" \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "conversation": [
-      {"role": "user", "content": "What did I do last month?"}
-    ]
-  }'
 ```
 
 ## Memory Structure
@@ -308,9 +272,7 @@ After onboarding, each user's memory is organized as:
 - `GET /memory/{user_id}/onboard-status` - Check if user is onboarded
 
 ### Reading
-- `POST /memory/{user_id}/context` - Get context for conversation
-- `POST /memory/{user_id}/search` - Direct BM25 search
-- `POST /memory/{user_id}/orchestrated-search` - LLM-orchestrated search
+- `POST /memory/{user_id}/context` - Get context for conversation (agent-based retrieval)
 - `GET /memory/{user_id}/user-entity` - Get user's profile
 - `GET /memory/{user_id}/recent-timeline` - Get recent timeline entries
 
@@ -322,9 +284,10 @@ After onboarding, each user's memory is organized as:
 ### Utilities
 - `GET /memory/{user_id}/status` - Get repository status
 - `GET /memory/{user_id}/validate` - Validate setup
-- `POST /memory/{user_id}/rebuild-index` - Rebuild search index
+- `POST /memory/{user_id}/webhook/post-commit` - Post-commit sync hook
 - `GET /health` - Health check
 - `GET /server/users` - List active users
+- `POST /server/sync` - Manual sync all users
 
 ## How GitHub Integration Works
 
@@ -340,8 +303,8 @@ After onboarding, each user's memory is organized as:
 
 3. **Memory Updates**: When memories are processed:
    - Changes are staged in the worktree
-   - Committed with a descriptive message
-   - Post-commit hook triggers (rebuilds index, syncs to GitHub)
+   - Committed with a descriptive message (includes modified entity names)
+   - Post-commit hook triggers sync to GitHub
    - Changes are pushed to GitHub automatically
 
 4. **Periodic Sync**: Every `SYNC_INTERVAL_MINUTES`, the server:
@@ -364,16 +327,17 @@ After onboarding, each user's memory is organized as:
 - Check that `GITHUB_TOKEN` is valid and has `repo` scope
 - Ensure repository exists and is accessible
 
-### Index not updating
-- Call `/rebuild-index` endpoint after bulk updates
-- Check that files are being committed properly
+### Context retrieval returning only baseline
+- Check that the retrieval agent LLM provider is configured (OPENROUTER_API_KEY or RETRIEVAL_AGENT_API_KEY)
+- Review the `retrieval_plan.synthesis` field in the response for agent errors
+- If `retrieval_version` is "fallback", the agent failed and returned only the user entity
 
 ## Next Steps
 
 1. **Start the server**: `python -m diffmem.server`
 2. **Onboard yourself**: Use the `/onboard` endpoint with your information
 3. **Process some memories**: Send conversation transcripts via `/process-and-commit`
-4. **Query memories**: Use `/context` or `/search` to retrieve information
+4. **Query memories**: Use `/context` to retrieve information
 5. **Check GitHub**: Visit your repository to see how memories are stored
 
 ## Example Workflow
@@ -398,7 +362,7 @@ curl -X POST "http://localhost:8000/memory/alex/process-and-commit" \
 curl -X POST "http://localhost:8000/memory/alex/context" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"conversation": [{"role": "user", "content": "Tell me about mom"}], "depth": "deep"}'
+  -d '{"conversation": [{"role": "user", "content": "Tell me about mom"}], "max_tokens": 15000}'
 ```
 
 ## Additional Resources
