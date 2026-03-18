@@ -15,3 +15,5 @@ app/
 *.ipynb
 *.mp3
 transcriber/
+user_test.json
+test_output/

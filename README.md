@@ -5,7 +5,7 @@
 [![Prototype](https://img.shields.io/badge/status-prototype-orange.svg)](https://github.com/alexmrval/DiffMem)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Growth-Kinetics/DiffMem)
 
-DiffMem is a lightweight, git-based memory backend designed for AI agents and conversational systems. It uses Markdown files for human-readable storage, Git for tracking temporal evolution through differentials, and an in-memory BM25 index for fast, explainable retrieval. This project is a proof-of-concept (PoC) exploring how version control systems can serve as a foundation for efficient, scalable memory in AI applications.
+DiffMem is a lightweight, git-based memory backend designed for AI agents and conversational systems. It uses Markdown files for human-readable storage, Git for tracking temporal evolution through differentials, and a git-native retrieval agent that explores the repository via shell commands (grep, git log, git diff, git blame) to build targeted context. No vector databases, no embeddings, no BM25 -- just git and an LLM.
 
 At its core, DiffMem treats memory as a versioned repository: the "current state" of knowledge is stored in editable files, while historical changes are preserved in Git's commit graph. This separation allows agents to query and search against a compact, up-to-date surface without the overhead of historical data, while enabling deep dives into evolution when needed.
 
@@ -52,9 +52,7 @@ DiffMem is structured as importable modules—no servers required. Key component
 
 - **Writer Agent** (`writer_agent`): Analyzes conversation transcripts, identifies/creates entities, stages updates in Git's working tree. Commits are explicit, ensuring atomic changes.
 
-- **Context Manager** (`context_manager`): Assembles query-relevant context at varying depths (basic: core blocks; wide: semantic search; deep: full files; temporal: with git history).
-
-- **Searcher Agent** (`searcher_agent`): LLM-orchestrated BM25 search—distills queries from conversations, retrieves snippets, synthesizes responses.
+- **Retrieval Agent** (`retrieval_agent`): A multi-turn LLM agent with a single `run(command="...")` tool that explores the memory repository via sandboxed shell commands. It reads `index.md`, probes git history for temporal patterns, and outputs a structured retrieval plan (file sections, git diffs, commit logs) that gets resolved into context.
 
 - **API Layer** (`api.py`): Clean interface for read/write operations. Example:
   ```python
@@ -62,41 +60,40 @@ DiffMem is structured as importable modules—no servers required. Key component
 
   memory = DiffMemory("/path/to/repo", "alex", "your-api-key")
   
-  # Get context for a conversation
-  context = memory.get_context(conversation, depth="deep")
+  # Get context for a conversation (agent explores git to find what's relevant)
+  context = memory.get_context(conversation, max_tokens=15000)
   
   # Process and commit new memory
   memory.process_and_commit_session("Had coffee with mom today...", "session-123")
   ```
 
-The repo follows a structured layout (see `repo_guide.md` for details), with current states in Markdown files and evolution in Git commits. Indexing is in-memory for speed, rebuilt on demand.
+The repo follows a structured layout (see `repo_guide.md` for details), with current states in Markdown files and evolution in Git commits. The retrieval agent navigates this structure using the same git commands a human developer would use.
 
 ## Why This Works
 
 DiffMem's git-centric design solves key challenges in AI memory systems:
 
-- **Reduced Query Surface**: Only current-state files are indexed/searched by default. This minimizes noise in BM25 results and keeps LLM contexts concise—crucial for token limits. When history is needed, agents pull targeted diffs (e.g., `git diff HEAD~1 file.md`), not full archives.
+- **Reduced Query Surface**: Only current-state files are explored by default. The retrieval agent reads `index.md` to understand the entity landscape, then surgically loads only what's relevant. When history is needed, it pulls targeted diffs (e.g., `git diff HEAD~3 file.md`), not full archives.
 
 - **Scalable Evolution Tracking**: Git handles 50+ years of changes efficiently. Agents can reconstruct past states (`git show <commit>:file.md`) without bloating active memory.
 
 - **Developer-Friendly**: No DB schemas or migrations—edit Markdown directly. Git provides free versioning, branching (e.g., monthly timelines), and collaboration.
 
-- **Lightweight PoC**: Runs in-process, minimal deps (gitpython, rank-bm25, sentence-transformers). Easy to hack on.
+- **Lightweight**: Runs in-process, minimal deps (gitpython, openai). No ML models, no embeddings, no vector databases.
 
 
 ## Prototype Status and Limitations
 
-This is an early PoC—functional but not production-hardened. What's working:
+What's working:
 - Entity creation/update from transcripts.
-- Multi-depth context assembly.
-- Semantic/BM25 hybrid search.
-- Git-based temporal queries.
+- Git-native agent retrieval with temporal reasoning.
+- Targeted context assembly (file sections, diffs, commit logs).
+- Fallback to baseline (user entity) when agent fails.
 
 Known limitations:
-- No automatic git sync (manual pulls/pushes).
-- Basic error handling.
-- Index rebuilds on every init (add caching for production).
+- Agent retrieval quality depends on the LLM model used.
 - No multi-user concurrency locks.
+- Writer agent prompt tuning ongoing.
 
 We're sharing this as open-source R&D to spark discussion. Feedback welcome!
 
@@ -110,7 +107,7 @@ DiffMem points to a future where AI memory is as versioned and collaborative as 
 
 - **Temporal Agents**: Specialized models that query git logs to answer "how did I change?"—enabling self-reflective AI.
 
-- **Hybrid Stores**: Combine with vector embeddings for semantic depth, using git as the "diff layer" over embeddings.
+- **Multi-Provider Retrieval**: Swap between OpenRouter, Cerebras, or any OpenAI-compatible provider for the retrieval agent.
 
 - **Open-Source Ecosystem**: Plugins for voice input, mobile sync, or integration with tools like Obsidian.
 

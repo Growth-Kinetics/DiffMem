@@ -48,6 +48,8 @@ curl -X POST "https://difmem.kingbarry.cc/memory/jon-morgenstern/process-and-com
 
 ### 4. Get Context for Conversation
 
+The retrieval agent explores the git repository to find relevant context. It reads the entity index, probes git history for temporal patterns, and returns targeted file sections and diffs.
+
 ```bash
 curl -X POST "https://difmem.kingbarry.cc/memory/jon-morgenstern/context" \
   -H "Content-Type: application/json" \
@@ -56,77 +58,54 @@ curl -X POST "https://difmem.kingbarry.cc/memory/jon-morgenstern/context" \
     "conversation": [
       {"role": "user", "content": "What campaigns has Jon been working on?"}
     ],
-    "depth": "deep"
+    "max_tokens": 15000,
+    "max_turns": 4,
+    "timeout_seconds": 30
   }'
 ```
 
-**Depth Options:**
-- `basic` - Top entities with ALWAYS_LOAD blocks (fastest)
-- `wide` - Semantic search with ALWAYS_LOAD blocks
-- `deep` - Complete entity files (comprehensive)
-- `temporal` - Complete files with Git history (most detailed)
+**Parameters:**
+- `conversation` (required) - Conversation history as message dicts
+- `max_tokens` (default: 20000) - Agent's additional context token budget
+- `max_turns` (default: 4) - Max agent exploration turns
+- `timeout_seconds` (default: 30) - Hard timeout for the agent loop
 
-### 5. Search Memories
-
-```bash
-curl -X POST "https://difmem.kingbarry.cc/memory/jon-morgenstern/search" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -d '{
-    "query": "Facebook ad campaign",
-    "k": 5
-  }'
-```
-
-### 6. LLM-Orchestrated Search
-
-```bash
-curl -X POST "https://difmem.kingbarry.cc/memory/jon-morgenstern/orchestrated-search" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -d '{
-    "conversation": [
-      {"role": "user", "content": "What did Jon work on last month?"}
-    ]
-  }'
-```
-
-### 7. Get User Entity
+### 5. Get User Entity
 
 ```bash
 curl -X GET "https://difmem.kingbarry.cc/memory/jon-morgenstern/user-entity" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
-### 8. Get Recent Timeline
+### 6. Get Recent Timeline
 
 ```bash
 curl -X GET "https://difmem.kingbarry.cc/memory/jon-morgenstern/recent-timeline?days_back=30" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
-### 9. Get Repository Status
+### 7. Get Repository Status
 
 ```bash
 curl -X GET "https://difmem.kingbarry.cc/memory/jon-morgenstern/status" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
-### 10. List All Users
+### 8. List All Users
 
 ```bash
 curl -X GET "https://difmem.kingbarry.cc/server/users" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
-### 11. Manual Sync
+### 9. Manual Sync
 
 ```bash
 curl -X POST "https://difmem.kingbarry.cc/server/sync" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
-### 12. Health Check
+### 10. Health Check
 
 ```bash
 curl -X GET "https://difmem.kingbarry.cc/health"
@@ -184,20 +163,39 @@ curl -X POST "https://difmem.kingbarry.cc/memory/jon-morgenstern/commit-session"
 }
 ```
 
-### Search Results
+### Context Retrieval
 ```json
 {
   "status": "success",
-  "results": [
-    {
-      "score": 0.85,
-      "snippet": {
-        "id": "facebook_campaign",
-        "content": "Facebook ad campaign optimization...",
-        "file_path": "memories/contexts/campaigns.md"
-      }
+  "context": {
+    "user_entity": {"source": "jon-morgenstern.md", "type": "user_entity", "content": "...", "tokens": 5000},
+    "recent_timeline": [],
+    "agent_context": [
+      {"source": "git diff HEAD~3.. -- memories/contexts/campaigns.md", "type": "git_diff", "content": "...", "reason": "Recent campaign changes", "tokens": 400},
+      {"source": "memories/contexts/campaigns.md:10-45", "type": "file_section", "content": "...", "reason": "Facebook campaign details", "tokens": 300}
+    ],
+    "always_load_blocks": [
+      {"source": "memories/contexts/campaigns.md", "type": "always_load", "header": "Core Identity", "content": "...", "tokens": 150}
+    ],
+    "retrieval_plan": {
+      "synthesis": "Agent found campaign entities with recent activity...",
+      "entities_identified": ["campaigns", "facebook_ads"],
+      "pointers": ["..."],
+      "agent_turns": 4,
+      "agent_elapsed_ms": 8500
+    },
+    "session_metadata": {
+      "user_id": "jon-morgenstern",
+      "retrieval_version": "agent",
+      "max_tokens": 15000,
+      "baseline_tokens": 5000,
+      "agent_tokens": 700,
+      "always_load_tokens": 150,
+      "total_tokens": 5850,
+      "agent_ms": 8500,
+      "timestamp": "2026-03-17T10:30:00"
     }
-  ]
+  }
 }
 ```
 
@@ -236,6 +234,20 @@ response = requests.post(
     }
 )
 print(response.json())
+
+# Get context for a conversation
+response = requests.post(
+    f"{BASE_URL}/memory/jon-morgenstern/context",
+    headers=headers,
+    json={
+        "conversation": [
+            {"role": "user", "content": "What campaigns has Jon been working on?"}
+        ],
+        "max_tokens": 15000
+    }
+)
+context = response.json()["context"]
+print(f"Agent found {len(context['agent_context'])} blocks in {context['session_metadata']['agent_ms']}ms")
 ```
 
 ## 🔗 Interactive API Docs

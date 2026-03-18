@@ -935,6 +935,19 @@ Total entities: {len(index_entries)}
         if not self.repo.is_dirty(untracked_files=True):  
             self.logger.warning("No changes to commit.")  
             return  
-        self.repo.git.add(A=True)  
-        self.repo.index.commit(f"Session {session_id}")
-        self.logger.info(f"COMMIT_SUCCESS: Committed session with id: '{session_id}'")
+        self.repo.git.add(A=True)
+
+        try:
+            cached_diff = self.repo.git.diff('--cached', '--name-only').strip()
+            modified = [f for f in cached_diff.split('\n') if f.strip()]
+            entity_names = [
+                Path(f).stem for f in modified
+                if f.strip() and '/sessions/' not in f and f != 'index.md'
+            ]
+            entities_str = ', '.join(entity_names[:8])
+            commit_msg = f"Session {session_id} | {entities_str}" if entities_str else f"Session {session_id}"
+        except Exception:
+            commit_msg = f"Session {session_id}"
+
+        self.repo.index.commit(commit_msg)
+        self.logger.info(f"COMMIT_SUCCESS: {commit_msg}")
