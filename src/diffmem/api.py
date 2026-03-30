@@ -34,7 +34,7 @@ class DiffMemory:
     """
 
     def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str,
-                 model: str = "google/gemini-2.5-pro", auto_onboard: bool = False,
+                 model: str = "google/gemini-3-flash-preview", auto_onboard: bool = False,
                  max_concurrent_llm_calls: int = 8):
         self.repo_path = Path(repo_path)
         self.user_id = user_id
@@ -357,7 +357,7 @@ class DiffMemory:
 
 def create_memory_interface(repo_path: str, user_id: str,
                           openrouter_api_key: str = None,
-                          model: str = "google/gemini-2.5-pro",
+                          model: str = "google/gemini-3-flash-preview",
                           auto_onboard: bool = False) -> DiffMemory:
     """Convenience function to create a DiffMemory interface."""
     if openrouter_api_key is None:
@@ -369,7 +369,7 @@ def create_memory_interface(repo_path: str, user_id: str,
 
 def onboard_new_user(repo_path: str, user_id: str, user_info: str,
                     openrouter_api_key: str = None,
-                    model: str = "google/gemini-2.5-pro",
+                    model: str = "google/gemini-3-flash-preview",
                     session_id: str = None,
                     template: str = None) -> Dict[str, Any]:
     """Onboard a completely new user to the memory system."""

@@ -14,7 +14,7 @@ from .agent import WriterAgent
 class OnboardingAgent(WriterAgent):
     """Handles initial user setup and directory structure creation."""
     
-    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: str = "google/gemini-2.5-pro"):
+    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: str = "google/gemini-3-flash-preview"):
         super().__init__(
             repo_path=repo_path, 
             user_id=user_id, 
