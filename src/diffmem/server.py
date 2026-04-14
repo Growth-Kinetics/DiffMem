@@ -1,5 +1,7 @@
 import asyncio
 import os
+import re
+import subprocess
 import logging
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -20,7 +22,7 @@ GITHUB_REPO_URL = os.getenv("GITHUB_REPO_URL")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "google/gemini-3-flash-preview")
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "xiaomi/mimo-v2-omni")
 STORAGE_PATH = Path(os.getenv("STORAGE_PATH", "/app/diffmem_storage"))
 WORKTREE_ROOT = Path(os.getenv("WORKTREE_ROOT", "/app/active_contexts"))
 SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", "5"))
@@ -30,6 +32,7 @@ security = HTTPBearer(auto_error=False)
 
 from .api import DiffMemory, onboard_new_user
 from .repo_manager import RepoManager
+from .retrieval_agent import command_router
 
 repo_manager: Optional[RepoManager] = None
 
@@ -78,6 +81,9 @@ class OnboardUserRequest(BaseModel):
     user_info: str = Field(..., description="Raw information dump about the user")
     session_id: Optional[str] = Field(None, description="Optional session ID for tracking")
     template: Optional[str] = Field(None, description="Pre-filled user entity markdown. If provided, bypasses LLM entity generation.")
+
+class RunCommandRequest(BaseModel):
+    command: str = Field(..., description="Sandboxed shell command to execute")
 
 
 def get_memory_instance(user_id: str, allow_unboarded: bool = False) -> DiffMemory:
@@ -272,6 +278,48 @@ async def get_recent_timeline(user_id: str, days_back: int = 30, authenticated: 
         logger.error(f"Timeline retrieval error for {user_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail=f"Timeline retrieval failed: {str(e)}")
+
+@app.post("/memory/{user_id}/run-command")
+async def run_command(user_id: str, request: RunCommandRequest, authenticated: bool = Depends(verify_api_key)):
+    """Execute a sandboxed shell command in the user's worktree. Same whitelist and sandboxing as the retrieval agent."""
+    memory = get_memory_instance(user_id)
+    try:
+        output = command_router.run(request.command, str(memory.repo_path))
+        match = re.search(r'\[exit:(\d+) \| (\d+)ms\]', output)
+        exit_code = int(match.group(1)) if match else 0
+        elapsed_ms = int(match.group(2)) if match else 0
+        return {"output": output, "exit_code": exit_code, "elapsed_ms": elapsed_ms}
+    except Exception as e:
+        logger.error(f"Run command error for {user_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Command execution failed: {str(e)}")
+
+@app.get("/memory/{user_id}/entity-version")
+async def get_entity_version(user_id: str, authenticated: bool = Depends(verify_api_key)):
+    """Return the latest commit hash and timestamp for the user's entity file."""
+    memory = get_memory_instance(user_id)
+    entity_file = f"{user_id}.md"
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%H %at", "--", entity_file],
+            cwd=str(memory.repo_path),
+            capture_output=True, text=True, timeout=10
+        )
+        raw = result.stdout.strip()
+        if not raw:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No commits found for entity file: {entity_file}"
+            )
+        commit_hash, unix_ts = raw.split(" ", 1)
+        committed_at = datetime.fromtimestamp(int(unix_ts)).isoformat()
+        return {"commit_hash": commit_hash, "committed_at": committed_at, "entity_path": entity_file}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Entity version error for {user_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Entity version lookup failed: {str(e)}")
 
 # --- Write Endpoints ---
 
