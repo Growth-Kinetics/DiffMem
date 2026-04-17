@@ -1,5 +1,7 @@
 venv/
+.venv/
 .env
+.env.local
 .DS_Store
 .vscode/
 .idea/
@@ -8,12 +10,17 @@ venv/
 .mypy_cache/
 .coverage
 .coverage.*
-.coverage.*
 __pycache__/
+*.pyc
 app/
-.dockerignore
 *.ipynb
 *.mp3
 transcriber/
 user_test.json
 test_output/
+
+# Local runtime state (when running without Docker).
+# Anchored to repo root so src/diffmem/storage/ (the Python package) is tracked.
+/data/
+/storage/
+/worktrees/

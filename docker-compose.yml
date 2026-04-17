@@ -1,0 +1,56 @@
+# DiffMem -- one-click self-hosting with Docker Compose.
+#
+# This file is designed for Coolify's "Docker Compose" deployment type: paste
+# the repo URL, point Coolify at this file, set OPENROUTER_API_KEY in the
+# Coolify env UI, and click deploy. Coolify handles TLS, the public domain,
+# and Traefik routing automatically -- no labels needed here.
+#
+# For a bare `docker compose up` on any Linux box, it also Just Works.
+
+services:
+  diffmem:
+    build: .
+    # Pre-built images will be published here once a release is tagged.
+    # image: ghcr.io/growth-kinetics/diffmem:latest
+    container_name: diffmem
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # --- Required ---
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+
+      # --- Optional ---
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-xiaomi/mimo-v2-omni}
+
+      # Auth. Leave REQUIRE_AUTH=false if you're behind Coolify/Traefik on a
+      # trusted network. Set REQUIRE_AUTH=true + API_KEY=<long-random-string>
+      # if the service is exposed publicly.
+      REQUIRE_AUTH: ${REQUIRE_AUTH:-false}
+      API_KEY: ${API_KEY:-}
+
+      # Backup. Leave unset (or BACKUP_BACKEND=none) for a pure-volume
+      # deployment -- snapshot /data and you're safe. Set GITHUB_REPO_URL +
+      # GITHUB_TOKEN to enable an offsite mirror on a private GitHub repo.
+      BACKUP_BACKEND: ${BACKUP_BACKEND:-none}
+      BACKUP_INTERVAL_MINUTES: ${BACKUP_INTERVAL_MINUTES:-30}
+      GITHUB_REPO_URL: ${GITHUB_REPO_URL:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+
+      # Advanced: override storage locations inside the container. Defaults
+      # match the mounted volume below; don't change unless you know why.
+      STORAGE_PATH: /data/storage
+      WORKTREE_ROOT: /data/worktrees
+    volumes:
+      - diffmem_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  diffmem_data:
+    # Named volume: Coolify persists this across deployments automatically.
+    # For a bare docker host, this lives at /var/lib/docker/volumes/.

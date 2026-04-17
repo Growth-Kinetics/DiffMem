@@ -23,19 +23,15 @@ pip-delete-this-directory.txt
 *.swo
 *~
 
-# Documentation
-*.md
-docs/
-notes/
-
-# Environment
+# Environment / local secrets
 .env
 .env.local
 .env.*.local
 
-# Local storage (will be mounted as volumes)
+# Local state (mounted as a volume at runtime)
 storage/
 worktrees/
+data/
 
 # Testing
 .pytest_cache/
@@ -56,7 +52,10 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Example files
-env.example
-example_*.sh
-*.example
+# Notebooks / notes
+notes/
+*.ipynb
+
+# Local test artifacts
+test_output/
+user_test.json

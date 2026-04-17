@@ -3,7 +3,7 @@
 To process conversational session transcripts, identify necessary memory updates (creations, modifications), and stage them in the Git working directory. It acts as the primary "write head" for the memory system, translating unstructured dialogue into structured, differential memory.  
 
 ## USER STORIES  
-- As Anna, I want to feed a session transcript to an agent that intelligently updates Alex's memory files without my manual intervention.  
+- As a chat agent, I want to feed a session transcript to a writer that intelligently updates the user's memory files without manual intervention.  
 - As a developer, I want changes to be buffered (staged) so I can review them before a final, atomic commit seals the session's memory update.  
 
 ## INFO FLOW  
