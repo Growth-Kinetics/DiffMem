@@ -21,6 +21,7 @@ IS_WINDOWS = platform.system() == "Windows"
 
 WHITELISTED_COMMANDS = {
     "cat", "head", "tail", "grep", "ls", "wc",
+    "awk", "sed", "cut", "sort", "uniq", "find",
     "git",
 }
 
@@ -62,6 +63,7 @@ def _get_git_bash_bin() -> Optional[str]:
 
 WHITELISTED_GIT_SUBCOMMANDS = {
     "log", "diff", "blame", "show", "rev-list", "shortlog",
+    "grep"
 }
 
 MAX_OUTPUT_LINES = 150

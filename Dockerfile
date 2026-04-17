@@ -1,48 +1,45 @@
-# DiffMem Server - Cloud-ready FastAPI deployment
+# DiffMem server -- single-image build for self-hosting.
+# All state lives under /data, which should be a mounted volume.
+
 FROM python:3.12-slim
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    git \
-    curl \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        curl \
+        tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
 COPY requirements.txt requirements-server.txt ./
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements-server.txt
 
-# Copy source code
 COPY src/ ./src/
 COPY pyproject.toml ./
+RUN pip install --no-cache-dir -e .
 
-# Install the package in development mode
-RUN pip install -e .
-
-# Create directory for repository and initialize empty git repo
-RUN mkdir -p /app/storage && \
-    mkdir -p /app/worktrees && \
+# Persistent state lives under /data. Mount a volume here.
+RUN mkdir -p /data/storage /data/worktrees && \
     git config --global user.name "DiffMem" && \
-    git config --global user.email "diffmem@prodsystem.local" && \
+    git config --global user.email "diffmem@localhost" && \
     git config --global credential.helper "" && \
-    git config --global http.postBuffer 524288000
+    git config --global http.postBuffer 524288000 && \
+    git config --global --add safe.directory '*'
 
-# Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+ENV PYTHONPATH=/app/src \
+    PYTHONUNBUFFERED=1 \
+    STORAGE_PATH=/data/storage \
+    WORKTREE_ROOT=/data/worktrees \
+    PORT=8000
 
-# Set environment variables
-ENV PYTHONPATH=/app/src
-ENV STORAGE_PATH=/app/storage
-ENV WORKTREE_ROOT=/app/worktrees
-ENV SYNC_INTERVAL_MINUTES=5
+VOLUME ["/data"]
 
-# Run the server
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -fsS http://localhost:${PORT:-8000}/health || exit 1
+
+# tini as PID 1 so SIGTERM from Coolify/Docker triggers FastAPI's lifespan
+# shutdown (which flushes final backups).
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["sh", "-c", "uvicorn diffmem.server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
