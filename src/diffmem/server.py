@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 # Public URL of *this* service, used only for the post-commit webhook.
 # Defaults to localhost so self-hosters behind a reverse proxy don't need to
 # set it; the webhook is an internal loop-back call.
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+_port = os.getenv("PORT", "8000")
+API_URL = os.getenv("API_URL", f"http://localhost:{_port}")
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "xiaomi/mimo-v2-omni")
