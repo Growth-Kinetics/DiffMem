@@ -352,6 +352,19 @@ class DiffMemory:
             'repo_path': str(self.repo_path)
         }
 
+    def delete_user(self, repo_manager: Optional["RepoManager"] = None) -> Dict[str, Any]:
+        from .repo_manager import RepoManager
+
+        rm = repo_manager or RepoManager()
+        rm.wipe_user(self.user_id)
+        self._writer_agent = None
+        logger.info(f"DELETE_USER: user={self.user_id} permanently deleted")
+        return {
+            "success": True,
+            "user_id": self.user_id,
+            "timestamp": datetime.now().isoformat(),
+        }
+
 
 # Convenience functions
 

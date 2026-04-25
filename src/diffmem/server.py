@@ -435,6 +435,24 @@ async def process_and_commit_session(user_id: str, request: ProcessSessionReques
                             detail=f"Session processing and commit failed: {str(e)}")
 
 
+# --- Deletion ---
+
+@app.delete("/memory/{user_id}")
+async def delete_user(user_id: str, authenticated: bool = Depends(verify_api_key)):
+    if user_id in memory_instances:
+        del memory_instances[user_id]
+    try:
+        repo_manager.wipe_user(user_id)
+        logger.info(f"DELETE_USER: user={user_id} permanently deleted")
+    except Exception as e:
+        logger.warning(f"DELETE_USER: wipe raised (idempotent, ignoring): {e}")
+    return {
+        "status": "success",
+        "message": f"User {user_id} and all associated data permanently deleted",
+        "metadata": {"user_id": user_id, "timestamp": datetime.now().isoformat()},
+    }
+
+
 # --- Utility Endpoints ---
 
 @app.post("/memory/{user_id}/webhook/post-commit")

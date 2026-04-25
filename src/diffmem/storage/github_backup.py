@@ -118,6 +118,21 @@ class GitHubBackupBackend(BackupBackend):
             logger.error(f"BACKUP_GITHUB: Failed to push {branch}: {e}")
             return False
 
+    def delete_user(self, user_id: str) -> bool:
+        if self.storage is None or self.storage.storage is None:
+            logger.warning("BACKUP_GITHUB: not configured, skipping delete")
+            return False
+
+        branch = f"{self.branch_prefix}{user_id}"
+        try:
+            with self.storage.storage.git.custom_environment(**self._git_env()):
+                self.storage.storage.remotes.origin.push(f":refs/heads/{branch}")
+            logger.info(f"BACKUP_GITHUB: Deleted remote branch {branch}")
+            return True
+        except Exception as e:
+            logger.error(f"BACKUP_GITHUB: Failed to delete remote branch {branch}: {e}")
+            return False
+
     def restore_all(self) -> int:
         """
         Fetch all user/* branches from the remote and create matching local
