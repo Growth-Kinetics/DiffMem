@@ -15,7 +15,7 @@ services:
     container_name: diffmem
     restart: unless-stopped
     ports:
-      - "${PORT:-8000}:8000"
+      - "${HOST_PORT:-8000}:8000"
     environment:
       # --- Required ---
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
