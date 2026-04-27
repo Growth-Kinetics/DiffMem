@@ -15,14 +15,13 @@ services:
     container_name: diffmem
     restart: unless-stopped
     ports:
-      - "${HOST_PORT:-8000}:8000"
+      - "8000:8000"
     environment:
       # --- Required ---
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
 
       # --- Optional ---
       DEFAULT_MODEL: ${DEFAULT_MODEL:-xiaomi/mimo-v2-omni}
-      PORT: "8000"
 
       # Auth. Leave REQUIRE_AUTH=false if you're behind Coolify/Traefik on a
       # trusted network. Set REQUIRE_AUTH=true + API_KEY=<long-random-string>

@@ -87,10 +87,6 @@ class BackupBackend(ABC):
         branches newly restored.
         """
 
-    def delete_user(self, user_id: str) -> bool:
-        """Delete the remote backup for a user. No-op by default. Returns True."""
-        return True
-
 
 class NoopBackupBackend(BackupBackend):
     """Default backup backend: does nothing. For volume-only self-hosters."""

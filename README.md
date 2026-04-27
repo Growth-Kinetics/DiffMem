@@ -83,9 +83,6 @@ DiffMem is designed to be deployed on a single small Linux box with a mounted vo
 
 Coolify will build the image, provision a named volume at `/data` (persists across deployments), run the healthcheck, and route traffic through its built-in Traefik reverse proxy. No TLS certs, no nginx configs, no open ports on the host.
 
-DiffMem listens on container port `8000`. If Coolify asks for the service port
-or proxy target, use `8000`; do not set `PORT` to the public or host port.
-
 Leave `REQUIRE_AUTH=false` (the default) if you're only calling DiffMem from another service on the same Coolify instance. Set `REQUIRE_AUTH=true` + `API_KEY=<long-random-string>` if you expose the domain publicly.
 
 ### Plain Docker Compose
@@ -100,14 +97,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The service listens on `http://localhost:8000` by default. Set `HOST_PORT` to
-change the host binding while keeping the container app on port `8000`, for
-example `HOST_PORT=8062 docker compose up -d`. All state lives in the
-`diffmem_data` named volume — back it up with:
-
-```bash
-docker run --rm -v diffmem_data:/data -v "$(pwd):/backup" alpine tar czf "/backup/diffmem-$(date +%F).tar.gz" /data
-```
+The service listens on `http://localhost:8000`. All state lives in the `diffmem_data` named volume — back it up with `docker run --rm -v diffmem_data:/data -v $(pwd):/backup alpine tar czf /backup/diffmem-$(date +%F).tar.gz /data`.
 
 ### As a Python library
 
@@ -130,7 +120,6 @@ Everything is configured via environment variables. Only `OPENROUTER_API_KEY` is
 | `REQUIRE_AUTH` | `false` | Enable bearer-token auth (set true for public deployments) |
 | `API_KEY` | *(unset)* | Shared bearer token when `REQUIRE_AUTH=true` |
 | `ALLOWED_ORIGINS` | `*` | CORS origins, comma-separated |
-| `HOST_PORT` | `8000` | Host port to bind for plain Docker Compose |
 | `BACKUP_BACKEND` | `none` | `none` or `github` |
 | `BACKUP_INTERVAL_MINUTES` | `30` | Backup cadence (0 disables periodic backups) |
 | `GITHUB_REPO_URL` | *(unset)* | Private repo for the `github` backup backend |
