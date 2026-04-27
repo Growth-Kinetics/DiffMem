@@ -25,7 +25,7 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 @dataclass
 class LLMConfig:
     provider: str = "openrouter"
-    model: str = ""
+    model: str = field(default="")
     base_url: str = "https://openrouter.ai/api/v1"
     api_key: Optional[str] = None
     temperature: float = 0.1

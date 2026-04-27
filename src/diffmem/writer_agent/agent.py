@@ -27,7 +27,7 @@ class WriterAgent:
         self.prompts_path = Path(__file__).parent / "prompts"  
         self.max_concurrent_llm_calls = max_concurrent_llm_calls  # Configurable concurrency limit
         if not model:
-            raise ValueError("Writer model must be provided by DEFAULT_MODEL.")
+            raise ValueError("model must be set via argument or DEFAULT_MODEL env var")
         self.model = model  
         
         if validate_paths:
