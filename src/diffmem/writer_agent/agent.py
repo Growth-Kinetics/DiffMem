@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 class WriterAgent:  
     """Orchestrates the process of updating memory files based on a session."""  
 
-    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: str = "anthropic/claude-3-haiku", max_concurrent_llm_calls: int = 8, validate_paths: bool = True):  
+    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: Optional[str] = None, max_concurrent_llm_calls: int = 8, validate_paths: bool = True):  
         self.repo_path = Path(repo_path)  
         self.user_id = user_id  
         self.user_path = self.repo_path 
@@ -26,6 +26,8 @@ class WriterAgent:
         self.memories_path = self.user_path / "memories"  
         self.prompts_path = Path(__file__).parent / "prompts"  
         self.max_concurrent_llm_calls = max_concurrent_llm_calls  # Configurable concurrency limit
+        if not model:
+            raise ValueError("model must be set via argument or DEFAULT_MODEL env var")
         self.model = model  
         
         if validate_paths:

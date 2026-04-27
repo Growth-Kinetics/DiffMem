@@ -34,12 +34,14 @@ class DiffMemory:
     """
 
     def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str,
-                 model: str = "xiaomi/mimo-v2-omni", auto_onboard: bool = False,
+                 model: Optional[str] = None, auto_onboard: bool = False,
                  max_concurrent_llm_calls: int = 8):
         self.repo_path = Path(repo_path)
         self.user_id = user_id
         self.openrouter_api_key = openrouter_api_key
-        self.model = model
+        self.model = model or os.getenv("DEFAULT_MODEL")
+        if not self.model:
+            raise ValueError("Default model must be provided or set in DEFAULT_MODEL env var")
         self.max_concurrent_llm_calls = max_concurrent_llm_calls
 
         self.user_path = self.repo_path
@@ -357,7 +359,7 @@ class DiffMemory:
 
 def create_memory_interface(repo_path: str, user_id: str,
                           openrouter_api_key: str = None,
-                          model: str = "xiaomi/mimo-v2-omni",
+                          model: Optional[str] = None,
                           auto_onboard: bool = False) -> DiffMemory:
     """Convenience function to create a DiffMemory interface."""
     if openrouter_api_key is None:
@@ -369,7 +371,7 @@ def create_memory_interface(repo_path: str, user_id: str,
 
 def onboard_new_user(repo_path: str, user_id: str, user_info: str,
                     openrouter_api_key: str = None,
-                    model: str = "xiaomi/mimo-v2-omni",
+                    model: Optional[str] = None,
                     session_id: str = None,
                     template: str = None) -> Dict[str, Any]:
     """Onboard a completely new user to the memory system."""

@@ -25,7 +25,7 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 @dataclass
 class LLMConfig:
     provider: str = "openrouter"
-    model: str = "x-ai/grok-4.1-fast"
+    model: str = field(default="")
     base_url: str = "https://openrouter.ai/api/v1"
     api_key: Optional[str] = None
     temperature: float = 0.1
@@ -39,20 +39,25 @@ class LLMConfig:
             "openrouter": {
                 "base_url": "https://openrouter.ai/api/v1",
                 "api_key_env": "OPENROUTER_API_KEY",
-                "model": "x-ai/grok-4.1-fast",
             },
             "cerebras": {
                 "base_url": "https://api.cerebras.ai/v1",
                 "api_key_env": "CEREBRAS_API_KEY",
-                "model": "qwen-3-235b-instruct",
             },
         }
 
         cfg = defaults.get(provider, defaults["openrouter"])
+        model = (
+            os.getenv("RETRIEVAL_MODEL")
+            or os.getenv("RETRIEVAL_AGENT_MODEL")
+            or os.getenv("DEFAULT_MODEL")
+        )
+        if not model:
+            raise ValueError("Set DEFAULT_MODEL or RETRIEVAL_MODEL for retrieval.")
 
         return cls(
             provider=provider,
-            model=os.getenv("RETRIEVAL_AGENT_MODEL", cfg["model"]),
+            model=model,
             base_url=os.getenv("RETRIEVAL_AGENT_BASE_URL", cfg["base_url"]),
             api_key=os.getenv("RETRIEVAL_AGENT_API_KEY", os.getenv(cfg["api_key_env"])),
             temperature=float(os.getenv("RETRIEVAL_AGENT_TEMPERATURE", "0.1")),

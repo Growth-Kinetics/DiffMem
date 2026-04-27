@@ -83,6 +83,9 @@ DiffMem is designed to be deployed on a single small Linux box with a mounted vo
 
 Coolify will build the image, provision a named volume at `/data` (persists across deployments), run the healthcheck, and route traffic through its built-in Traefik reverse proxy. No TLS certs, no nginx configs, no open ports on the host.
 
+DiffMem listens on `PORT`, defaulting to `8000`. If Coolify asks for the
+service port or proxy target, use the same value you set for `PORT`.
+
 Leave `REQUIRE_AUTH=false` (the default) if you're only calling DiffMem from another service on the same Coolify instance. Set `REQUIRE_AUTH=true` + `API_KEY=<long-random-string>` if you expose the domain publicly.
 
 ### Plain Docker Compose
@@ -116,7 +119,8 @@ Everything is configured via environment variables. Only `OPENROUTER_API_KEY` is
 | Variable | Default | Purpose |
 |---|---|---|
 | `OPENROUTER_API_KEY` | *(required)* | Your OpenRouter key |
-| `DEFAULT_MODEL` | `xiaomi/mimo-v2-omni` | LLM used by agents (any OpenRouter model slug) |
+| `DEFAULT_MODEL` | *(required)* | Shared LLM for writer, onboarding, and retrieval agents |
+| `RETRIEVAL_MODEL` | *(unset)* | Optional retrieval-only model override; uses `DEFAULT_MODEL` when unset |
 | `REQUIRE_AUTH` | `false` | Enable bearer-token auth (set true for public deployments) |
 | `API_KEY` | *(unset)* | Shared bearer token when `REQUIRE_AUTH=true` |
 | `ALLOWED_ORIGINS` | `*` | CORS origins, comma-separated |

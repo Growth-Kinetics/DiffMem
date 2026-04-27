@@ -15,13 +15,15 @@ services:
     container_name: diffmem
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:${PORT:-8000}"
     environment:
       # --- Required ---
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
 
       # --- Optional ---
-      DEFAULT_MODEL: ${DEFAULT_MODEL:-xiaomi/mimo-v2-omni}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:?Set DEFAULT_MODEL to an OpenRouter model slug}
+      RETRIEVAL_MODEL: ${RETRIEVAL_MODEL:-}
+      PORT: ${PORT:-8000}
 
       # Auth. Leave REQUIRE_AUTH=false if you're behind Coolify/Traefik on a
       # trusted network. Set REQUIRE_AUTH=true + API_KEY=<long-random-string>
@@ -44,7 +46,7 @@ services:
     volumes:
       - diffmem_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:$${PORT:-8000}/health"]
       interval: 30s
       timeout: 5s
       retries: 3
