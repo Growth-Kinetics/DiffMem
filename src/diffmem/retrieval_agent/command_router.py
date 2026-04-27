@@ -105,21 +105,86 @@ def _validate_command(tokens: List[str]) -> Optional[str]:
 
     return None
 
+def _split_pipeline(pipeline_str: str) -> List[str]:
+    """Split a pipeline string by '|', respecting quotes and escapes."""
+    parts = []
+    current = []
+    in_single = False
+    in_double = False
+    escape = False
+
+    for c in pipeline_str:
+        if escape:
+            current.append(c)
+            escape = False
+        elif c == '\\':
+            current.append(c)
+            escape = True
+        elif c == "'" and not in_double:
+            in_single = not in_single
+            current.append(c)
+        elif c == '"' and not in_single:
+            in_double = not in_double
+            current.append(c)
+        elif c == '|' and not in_single and not in_double:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(c)
+            
+    if current:
+        parts.append("".join(current))
+        
+    return parts
+
 
 def _split_chain(command: str) -> List[Tuple[str, str]]:
     """
-    Split a command string into segments by chain operators.
+    Split a command string into segments by chain operators (||, &&, ;),
+    respecting quotes and escapes.
     Returns list of (operator, command_str) tuples.
-    The first segment has operator "".
-    Pipe segments are grouped together as a single unit.
     """
     segments = []
     current = []
     i = 0
     chars = command
+    
+    in_single = False
+    in_double = False
+    escape = False
 
     while i < len(chars):
         c = chars[i]
+
+        if escape:
+            current.append(c)
+            escape = False
+            i += 1
+            continue
+
+        if c == '\\':
+            current.append(c)
+            escape = True
+            i += 1
+            continue
+
+        if c == "'" and not in_double:
+            in_single = not in_single
+            current.append(c)
+            i += 1
+            continue
+
+        if c == '"' and not in_single:
+            in_double = not in_double
+            current.append(c)
+            i += 1
+            continue
+
+        # If inside quotes, don't split on operators
+        if in_single or in_double:
+            current.append(c)
+            i += 1
+            continue
 
         if c == '|' and i + 1 < len(chars) and chars[i + 1] == '|':
             segments.append(("||" if segments or current else "", "".join(current).strip()))
@@ -158,7 +223,8 @@ def _execute_pipeline(pipeline_str: str, cwd: str) -> Tuple[str, str, int]:
     Execute a pipeline (commands joined by |) as a single shell subprocess.
     Returns (stdout, stderr, returncode).
     """
-    pipe_parts = pipeline_str.split('|')
+    # Use our new quote-aware splitter instead of the naive .split('|')
+    pipe_parts = _split_pipeline(pipeline_str)
 
     for part in pipe_parts:
         part = part.strip()
@@ -204,6 +270,7 @@ def _execute_pipeline(pipeline_str: str, cwd: str) -> Tuple[str, str, int]:
         return "", f"[error] command timed out after {COMMAND_TIMEOUT_SECONDS}s", 1
     except Exception as e:
         return "", f"[error] execution failed: {e}", 1
+
 
 
 def _apply_presentation_layer(stdout: str, stderr: str, returncode: int,
