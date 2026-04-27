@@ -81,7 +81,9 @@ class RepoManager:
         self.storage.wipe_user(user_id)
         # Best-effort remote deletion. Never raises.
         try:
-            self.backup.delete_user(user_id)
+            delete = getattr(self.backup, "delete_user", None)
+            if callable(delete):
+                delete(user_id)
         except Exception as e:
             logger.warning(f"WIPE: backup delete failed (non-fatal): {e}")
 

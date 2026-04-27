@@ -100,14 +100,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The service listens on `http://localhost:8000` by default. Set `PORT` to change
-both the app listener and the Docker host binding, for example
-`PORT=8062 docker compose up -d`. All state lives in the `diffmem_data` named
-volume — back it up with:
-
-```bash
-docker run --rm -v diffmem_data:/data -v "$(pwd):/backup" alpine tar czf "/backup/diffmem-$(date +%F).tar.gz" /data
-```
+The service listens on `http://localhost:8000`. All state lives in the `diffmem_data` named volume — back it up with `docker run --rm -v diffmem_data:/data -v $(pwd):/backup alpine tar czf /backup/diffmem-$(date +%F).tar.gz /data`.
 
 ### As a Python library
 
@@ -131,7 +124,6 @@ Everything is configured via environment variables. Only `OPENROUTER_API_KEY` is
 | `REQUIRE_AUTH` | `false` | Enable bearer-token auth (set true for public deployments) |
 | `API_KEY` | *(unset)* | Shared bearer token when `REQUIRE_AUTH=true` |
 | `ALLOWED_ORIGINS` | `*` | CORS origins, comma-separated |
-| `PORT` | `8000` | App listener and Docker host port |
 | `BACKUP_BACKEND` | `none` | `none` or `github` |
 | `BACKUP_INTERVAL_MINUTES` | `30` | Backup cadence (0 disables periodic backups) |
 | `GITHUB_REPO_URL` | *(unset)* | Private repo for the `github` backup backend |

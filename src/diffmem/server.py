@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 # Public URL of *this* service, used only for the post-commit webhook.
 # Defaults to localhost so self-hosters behind a reverse proxy don't need to
 # set it; the webhook is an internal loop-back call.
-_port = os.getenv("PORT", "8000")
-API_URL = os.getenv("API_URL", f"http://localhost:{_port}")
+API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL")
@@ -434,24 +433,6 @@ async def process_and_commit_session(user_id: str, request: ProcessSessionReques
         logger.error(f"Session processing and commit error for {user_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail=f"Session processing and commit failed: {str(e)}")
-
-
-# --- Deletion ---
-
-@app.delete("/memory/{user_id}")
-async def delete_user(user_id: str, authenticated: bool = Depends(verify_api_key)):
-    if user_id in memory_instances:
-        del memory_instances[user_id]
-    try:
-        repo_manager.wipe_user(user_id)
-        logger.info(f"DELETE_USER: user={user_id} permanently deleted")
-    except Exception as e:
-        logger.warning(f"DELETE_USER: wipe raised (idempotent, ignoring): {e}")
-    return {
-        "status": "success",
-        "message": f"User {user_id} and all associated data permanently deleted",
-        "metadata": {"user_id": user_id, "timestamp": datetime.now().isoformat()},
-    }
 
 
 # --- Utility Endpoints ---
