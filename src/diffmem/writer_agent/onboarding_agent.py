@@ -14,7 +14,7 @@ from .agent import WriterAgent
 class OnboardingAgent(WriterAgent):
     """Handles initial user setup and directory structure creation."""
     
-    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: str = "xiaomi/mimo-v2-omni"):
+    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: Optional[str] = None):
         super().__init__(
             repo_path=repo_path, 
             user_id=user_id, 

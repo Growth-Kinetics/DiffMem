@@ -26,7 +26,7 @@ _port = os.getenv("PORT", "8000")
 API_URL = os.getenv("API_URL", f"http://localhost:{_port}")
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "xiaomi/mimo-v2-omni")
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL")
 
 # Authentication is OFF by default: the intended deployment is behind a
 # reverse proxy (e.g. Coolify/Traefik) on a private network. Set

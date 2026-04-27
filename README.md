@@ -126,7 +126,8 @@ Everything is configured via environment variables. Only `OPENROUTER_API_KEY` is
 | Variable | Default | Purpose |
 |---|---|---|
 | `OPENROUTER_API_KEY` | *(required)* | Your OpenRouter key |
-| `DEFAULT_MODEL` | `xiaomi/mimo-v2-omni` | LLM used by agents (any OpenRouter model slug) |
+| `DEFAULT_MODEL` | *(required)* | Shared LLM for writer, onboarding, and retrieval agents |
+| `RETRIEVAL_MODEL` | *(unset)* | Optional retrieval-only model override; uses `DEFAULT_MODEL` when unset |
 | `REQUIRE_AUTH` | `false` | Enable bearer-token auth (set true for public deployments) |
 | `API_KEY` | *(unset)* | Shared bearer token when `REQUIRE_AUTH=true` |
 | `ALLOWED_ORIGINS` | `*` | CORS origins, comma-separated |

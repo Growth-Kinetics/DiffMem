@@ -21,7 +21,8 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
 
       # --- Optional ---
-      DEFAULT_MODEL: ${DEFAULT_MODEL:-xiaomi/mimo-v2-omni}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:?Set DEFAULT_MODEL to an OpenRouter model slug}
+      RETRIEVAL_MODEL: ${RETRIEVAL_MODEL:-}
       PORT: ${PORT:-8000}
 
       # Auth. Leave REQUIRE_AUTH=false if you're behind Coolify/Traefik on a

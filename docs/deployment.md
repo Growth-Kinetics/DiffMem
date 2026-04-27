@@ -28,6 +28,15 @@ domain, set `PORT` to the port you want the container to listen on and configure
 the service to proxy to that same container port. Public traffic still enters
 through Coolify's normal HTTP or HTTPS entrypoints.
 
+## Models
+
+`DEFAULT_MODEL` is required. It is the shared OpenRouter model for writer,
+onboarding, and retrieval agents. Any OpenRouter model slug can be used.
+
+Leave `RETRIEVAL_MODEL` empty to use `DEFAULT_MODEL` for retrieval. Set
+`RETRIEVAL_MODEL` only when retrieval should use a different model from writer
+and onboarding.
+
 ## Health Check
 
 The health endpoint is an unauthenticated liveness check implemented by
