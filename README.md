@@ -242,3 +242,51 @@ Fork, experiment, PR. We're especially interested in:
 
 License: MIT
 Growth Kinetics © 2025
+
+---
+
+## FAQ
+
+### What is DiffMem?
+
+DiffMem is a lightweight, git-based memory backend for AI agents and conversational systems. It uses Markdown files for human-readable storage, Git for tracking temporal evolution through differentials, and a git-native retrieval agent. **No vector databases, no embeddings, no BM25** — just git and an LLM.
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Git-Based** | Memory as versioned repository |
+| **Markdown Storage** | Human-readable memory files |
+| **Native Retrieval** | `grep`, `git log`, `git diff` |
+| **Temporal Evolution** | Track changes over time |
+| **No Embeddings** | Pure git + LLM approach |
+| **Production Ready** | Powers Annabelle AI |
+
+### Production Usage
+
+DiffMem powers **[Annabelle](https://withanna.io/)**, a simulated intelligence that maintains persistent memory across thousands of conversations on WhatsApp and Messenger.
+
+### Installation
+
+```bash
+pip install diffmem
+```
+
+### Requirements
+
+| Requirement | Version |
+|-------------|---------|
+| **Python** | 3.11+ |
+| **Git** | Any version |
+| **LLM API** | OpenAI/Anthropic/etc. |
+
+### License
+
+MIT License
+
+### Help & Resources
+
+- [GitHub Repository](https://github.com/Growth-Kinetics/DiffMem)
+- [Sample Memory](https://github.com/Growth-Kinetics/diffmem_sample_memory)
+- [DeepWiki](https://deepwiki.com/Growth-Kinetics/DiffMem)
+- [Annabelle](https://withanna.io/)
