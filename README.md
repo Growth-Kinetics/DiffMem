@@ -212,7 +212,11 @@ What's working:
 
 Known limitations:
 - Agent retrieval quality depends on the LLM model used.
-- No multi-user concurrency locks (one worktree = one writer at a time).
+- No multi-user concurrency locks (one worktree = one writer at a time). Callers must
+  serialize writes for the same user.
+- Write endpoints (`process-and-commit`, `process-session`, `commit-session`) run the
+  writer agent in a background thread pool and can take 60–600s for large sessions.
+  The HTTP response is returned once the write completes; the connection stays open.
 - Writer agent prompt tuning is ongoing.
 
 We're sharing this as open-source R&D to spark discussion. Feedback welcome!
