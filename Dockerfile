@@ -34,7 +34,8 @@ ENV PYTHONPATH=/app/src \
     WORKTREE_ROOT=/data/worktrees \
     PORT=8000
 
-VOLUME ["/data"]
+# VOLUME ["/data"] removed for Railway compatibility — Railway provides volumes via
+# its own attachment system. The mount happens at /data via railway volumeCreate.
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://localhost:${PORT:-8000}/health || exit 1

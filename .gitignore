@@ -24,3 +24,6 @@ test_output/
 /data/
 /storage/
 /worktrees/
+
+# Machine-local deployment context (Railway, Coolify, etc.)
+.pi/
