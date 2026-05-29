@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Set
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -136,6 +137,12 @@ def get_memory_instance(user_id: str, allow_unboarded: bool = False) -> DiffMemo
 # asyncio.create_task -- "important" note about losing task references).
 _background_tasks: Set[asyncio.Task] = set()
 
+# Thread pool for blocking writer-agent operations. The writer agent runs
+# multi-step git + LLM work that can block for 60-600s on large sessions.
+# Running it in a thread keeps the uvicorn event loop responsive so health
+# probes and read endpoints are never blocked by an in-flight write.
+_writer_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="diffmem-writer")
+
 
 def _spawn_background(coro) -> asyncio.Task:
     """Create a task, track it, and auto-remove it from the set on completion."""
@@ -198,6 +205,8 @@ async def lifespan(app: FastAPI):
     logger.info("DiffMem server shutting down...")
     if backup_task is not None:
         backup_task.cancel()
+
+    _writer_pool.shutdown(wait=False)
 
     try:
         active_users = repo_manager.list_active_users()
@@ -395,10 +404,14 @@ async def get_entity_version(user_id: str, authenticated: bool = Depends(verify_
 
 @app.post("/memory/{user_id}/process-session")
 async def process_session(user_id: str, request: ProcessSessionRequest, authenticated: bool = Depends(verify_api_key)):
-    """Process session transcript and stage changes"""
+    """Process session transcript and stage changes. Runs in thread pool to keep event loop free."""
     memory = get_memory_instance(user_id)
     try:
-        memory.process_session(request.memory_input, request.session_id, request.session_date)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            _writer_pool,
+            lambda: memory.process_session(request.memory_input, request.session_id, request.session_date)
+        )
         return {"status": "success", "session_id": request.session_id,
                 "message": "Session processed and staged for commit",
                 "metadata": {"user_id": user_id, "timestamp": datetime.now().isoformat()}}
@@ -410,10 +423,14 @@ async def process_session(user_id: str, request: ProcessSessionRequest, authenti
 
 @app.post("/memory/{user_id}/commit-session")
 async def commit_session(user_id: str, request: CommitSessionRequest, authenticated: bool = Depends(verify_api_key)):
-    """Commit staged changes for a session. Backup runs out-of-band."""
+    """Commit staged changes for a session. Runs in thread pool; backup runs out-of-band."""
     memory = get_memory_instance(user_id)
     try:
-        memory.commit_session(request.session_id)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            _writer_pool,
+            lambda: memory.commit_session(request.session_id)
+        )
         # Fire-and-forget backup; never blocks the response.
         _spawn_background(backup_user(user_id))
         return {"status": "success", "session_id": request.session_id,
@@ -427,10 +444,14 @@ async def commit_session(user_id: str, request: CommitSessionRequest, authentica
 
 @app.post("/memory/{user_id}/process-and-commit")
 async def process_and_commit_session(user_id: str, request: ProcessSessionRequest, authenticated: bool = Depends(verify_api_key)):
-    """Process and immediately commit a session. Backup runs out-of-band."""
+    """Process and immediately commit a session. Runs in thread pool; backup runs out-of-band."""
     memory = get_memory_instance(user_id)
     try:
-        memory.process_and_commit_session(request.memory_input, request.session_id, request.session_date)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            _writer_pool,
+            lambda: memory.process_and_commit_session(request.memory_input, request.session_id, request.session_date)
+        )
         # Fire-and-forget backup; never blocks the response.
         _spawn_background(backup_user(user_id))
         return {"status": "success", "session_id": request.session_id,
