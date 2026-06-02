@@ -109,13 +109,50 @@ class GitHubBackupBackend(BackupBackend):
 
         branch = f"{self.branch_prefix}{user_id}"
         try:
-            # git.Repo.git.custom_environment() scopes env changes to one call.
             with self.storage.storage.git.custom_environment(**self._git_env()):
                 self.storage.storage.remotes.origin.push(f"{branch}:{branch}")
             logger.info(f"BACKUP_GITHUB: Pushed {branch}")
             return True
         except Exception as e:
             logger.error(f"BACKUP_GITHUB: Failed to push {branch}: {e}")
+            return False
+
+    def pull_user(self, user_id: str) -> bool:
+        """
+        Fetch the user's branch from origin and fast-forward the local branch
+        and its checked-out worktree. Non-fatal: any failure is logged and
+        returns False so the caller can proceed with the local state.
+        """
+        if self.storage is None or self.storage.storage is None:
+            return False
+
+        branch = f"{self.branch_prefix}{user_id}"
+        repo = self.storage.storage
+        worktree_path = self.storage.worktree_root / user_id
+
+        try:
+            # 1. Fetch the remote branch into a remote-tracking ref.
+            with repo.git.custom_environment(**self._git_env()):
+                repo.remotes.origin.fetch(f"{branch}:{branch}", force=True)
+
+            # 2. Fast-forward the worktree HEAD if it is mounted.
+            if worktree_path.exists():
+                import git as _git
+                wt = _git.Repo(worktree_path)
+                local_sha = wt.head.commit.hexsha
+                remote_sha = repo.branches[branch].commit.hexsha
+                if local_sha == remote_sha:
+                    logger.debug(f"BACKUP_GITHUB: {branch} already up-to-date")
+                    return False
+                # Only fast-forward (never merge/rebase).
+                wt.head.reset(remote_sha, index=True, working_tree=True)
+                logger.info(f"BACKUP_GITHUB: Pulled {branch} {local_sha[:7]}..{remote_sha[:7]}")
+            else:
+                logger.debug(f"BACKUP_GITHUB: {branch} fetched (worktree not yet mounted)")
+
+            return True
+        except Exception as e:
+            logger.warning(f"BACKUP_GITHUB: pull_user({user_id}) failed (non-fatal): {e}")
             return False
 
     def restore_all(self) -> int:

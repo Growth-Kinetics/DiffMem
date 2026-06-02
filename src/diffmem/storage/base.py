@@ -80,6 +80,16 @@ class BackupBackend(ABC):
         """Push the user's branch to the remote. Returns True on success."""
 
     @abstractmethod
+    def pull_user(self, user_id: str) -> bool:
+        """
+        Fetch the user's branch from the remote and fast-forward the local
+        branch to match. Called before reads so edits made from other
+        machines are visible. Returns True if the branch was updated,
+        False if already up-to-date or backend is disabled.
+        Never raises — log and return False on any error.
+        """
+
+    @abstractmethod
     def restore_all(self) -> int:
         """
         Pull user branches from the remote into the local storage repo.
@@ -99,6 +109,9 @@ class NoopBackupBackend(BackupBackend):
 
     def sync_user(self, user_id: str) -> bool:
         return True
+
+    def pull_user(self, user_id: str) -> bool:
+        return False
 
     def restore_all(self) -> int:
         return 0

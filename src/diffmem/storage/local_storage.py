@@ -15,7 +15,7 @@ from typing import List, Optional
 
 import git
 
-from .base import StorageBackend
+from .base import BackupBackend, NoopBackupBackend, StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,9 @@ class LocalStorageBackend(StorageBackend):
         self.storage: Optional[git.Repo] = None
         self._branch_cache: set = set()
         self._cache_valid = False
+        # Injected by RepoManager after construction so LocalStorage can
+        # pull from remote before serving an existing user's worktree.
+        self._backup: BackupBackend = NoopBackupBackend()
 
     def init(self) -> None:
         self.worktree_root.mkdir(parents=True, exist_ok=True)
@@ -98,6 +101,9 @@ class LocalStorageBackend(StorageBackend):
 
         if local_exists:
             self._create_worktree_with_retry(str(worktree_path), user_branch, orphan=False)
+            # Pull remote changes so edits made from other machines are visible
+            # before the retrieval agent reads from this worktree.
+            self._backup.pull_user(user_id)
         else:
             self._create_worktree_with_retry(str(worktree_path), user_branch, orphan=True)
             self._branch_cache.add(user_branch)

@@ -37,6 +37,11 @@ class RepoManager:
         self.storage.init()
         self.backup.configure(self.storage)
 
+        # Give storage a reference to backup so get_user_worktree() can
+        # pull remote changes before serving an existing user's worktree.
+        if hasattr(self.storage, '_backup'):
+            self.storage._backup = self.backup
+
         # Cold-start restore: only when the backup is enabled AND the local
         # storage has no user branches yet. Otherwise restore_all is a waste
         # of network on every restart.

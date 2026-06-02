@@ -303,15 +303,19 @@ async def get_onboard_status(user_id: str, authenticated: bool = Depends(verify_
 
 @app.post("/memory/{user_id}/context")
 async def get_context(user_id: str, request: ContextRequest, authenticated: bool = Depends(verify_api_key)):
-    """Git-native agent retrieval. Agent explores git history to build context."""
+    """Git-native agent retrieval. Runs in thread pool (pull + agent are blocking)."""
     memory = get_memory_instance(user_id)
     try:
-        context = memory.get_context(
-            request.conversation,
-            max_tokens=request.max_tokens,
-            max_turns=request.max_turns,
-            timeout_seconds=request.timeout_seconds,
-            baseline_only=request.baseline_only,
+        loop = asyncio.get_event_loop()
+        context = await loop.run_in_executor(
+            _writer_pool,
+            lambda: memory.get_context(
+                request.conversation,
+                max_tokens=request.max_tokens,
+                max_turns=request.max_turns,
+                timeout_seconds=request.timeout_seconds,
+                baseline_only=request.baseline_only,
+            )
         )
         return {
             "status": "success",
