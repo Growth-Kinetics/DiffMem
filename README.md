@@ -62,7 +62,7 @@ Each user gets an isolated **orphan branch** (`user/{user_id}`) inside a single 
 The service has two pluggable concerns:
 
 - **Storage backend** — where the repo and worktrees live. Default is `local` (a mounted disk). This is a hard requirement of the retrieval agent, which shells out to `grep`/`git log` on a real directory.
-- **Backup backend** — an *optional* out-of-band mirror. Options: `none` (default; rely on volume snapshots) or `github` (mirror user branches to a private GitHub repo you own). Backups run on a scheduler — they're never in the request hot path, so LLM latency is never blocked on a push.
+- **Backup backend** — an *optional* bidirectional mirror. Options: `none` (default; rely on volume snapshots) or `github` (mirror user branches to a private GitHub repo you own). Pushes run on a scheduler and are never in the request hot path. Pulls happen at worktree mount time (first request per user after a restart), keeping the local volume in sync with any edits made from other machines.
 
 This separation means self-hosters can run DiffMem with zero external dependencies, and users who want an offsite mirror can opt in with two env vars.
 
@@ -144,6 +144,8 @@ GITHUB_TOKEN=ghp_...
 **Cold-start restore**: on a brand-new deployment with an empty `/data` volume, DiffMem fetches any existing `user/*` branches from the remote so you don't start from scratch (useful for migrations and disaster recovery). Once the volume has user branches, startup-time restores are skipped — the mounted volume is the source of truth.
 
 **Per-commit backup**: a post-commit hook fires a webhook that pushes the user's branch to GitHub in the background. Push failures never block the request — the periodic backup (`BACKUP_INTERVAL_MINUTES`) catches up on the next tick.
+
+**Remote pull at mount time**: when the service starts and a user's worktree is first accessed, DiffMem fetches their branch from GitHub and fast-forwards the local branch before serving any reads. This means edits made to memory files from another machine (pushed to GitHub) are visible as soon as the service restarts. Pull failures are non-fatal — the service continues with its local state.
 
 **Credentials**: the token is passed to git via `GIT_ASKPASS` at call time, never written into `.git/config` on the volume.
 

@@ -22,9 +22,10 @@ in the git commit graph. No vector DB, no embeddings.
 ## Terminology
 - **Worktree:** Per-user git working directory. Mounted lazily on first request.
 - **Storage repo:** The bare central repo at `/data/storage`. All user branches live here.
-- **Backup backend:** Optional out-of-band mirror (GitHub). Never in the request hot path.
-- **Writer pool:** `ThreadPoolExecutor(max_workers=4)` in `server.py` that runs blocking
-  writer-agent operations off the uvicorn event loop.
+- **Backup backend:** Optional out-of-band mirror (GitHub). Push is out-of-band; pull happens
+  at mount time (first request after restart) to pick up remote edits.
+- **Writer pool:** `ThreadPoolExecutor(max_workers=4)` in `server.py` that runs all blocking
+  operations off the uvicorn event loop — writes, reads, and remote pulls.
 
 ## Key Files
 - `server.py` — FastAPI app, all HTTP endpoints, `_writer_pool` thread pool, lifespan.
@@ -42,16 +43,22 @@ in the git commit graph. No vector DB, no embeddings.
 - **GitHub** (optional) — backup backend when `BACKUP_BACKEND=github`.
 
 ## Constraints
-- **Write endpoints are blocking by design (writer agent).** They run in `_writer_pool`
-  (4 threads) to keep the uvicorn event loop free for health probes and reads. A large
-  session (80+ entities) can take 60–600s — this is expected.
+- **All three blocking operations run in `_writer_pool`:** writes (process/commit), reads
+  (`/context`), and remote pulls at mount time. Keeps the uvicorn event loop free for health
+  probes at all times.
+- **Pull happens at mount time only** (first request per user per process lifetime, i.e. after
+  a service restart). If the service stays up for days and you push memory edits from another
+  machine, DiffMem won't see them until the next restart. Pull is fast-forward only — diverged
+  branches fail cleanly with a warning log.
 - **One writer per user at a time.** No concurrency locks on worktrees; callers must serialize.
 - **Volume at `/data` is required.** Storage and worktrees are on disk; the service has no
   in-memory-only mode.
 - **Health endpoint is always unauthenticated.** Required for Railway/Coolify probes.
 
 ## Attention Guidance
-- For write latency issues: start at `writer_agent/agent.py` → `process_session` / `commit_session`.
-- For retrieval quality issues: start at `retrieval_agent/agent.py` → `run_retrieval_agent`.
+- For write latency issues: `writer_agent/agent.py` → `process_session` / `commit_session`.
+- For retrieval quality issues: `retrieval_agent/agent.py` → `run_retrieval_agent`.
+- For remote sync issues (edits from other machines not visible): `storage/github_backup.py`
+  → `pull_user()`, `storage/local_storage.py` → `get_user_worktree()` pull call site.
 - For auth / CORS / startup: `server.py` lifespan + `verify_api_key`.
-- For backup failures: `storage/github_backup.py`.
+- For backup push failures: `storage/github_backup.py` → `sync_user()`.
