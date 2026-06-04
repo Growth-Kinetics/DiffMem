@@ -19,6 +19,10 @@ src/diffmem/             — Core package (importable as a library or run as a s
     baseline.py          —   load_baseline(), load_user_entity(), load_recent_timeline()
     resolver.py          —   resolve_pointers(): converts RetrievalPlan → context blocks
     prompts/             —   Prompt files for retrieval agent
+  consolidator_agent/    — Out-of-band repair pass: dedupe, redistribute, link
+    agent.py             —   ConsolidatorAgent: run_dedupe(), run_redistribute(), run_link()
+    lock.py              —   ConsolidatorLock context manager + LockBusyError
+    prompts/             —   Prompt files for consolidator tools (populated in M2–M4)
   storage/               — Pluggable storage + backup backends
     factory.py           —   Backend factory; reads STORAGE_BACKEND / BACKUP_BACKEND env vars
     local_storage.py     —   LocalStorageBackend: bare repo + worktrees on disk; calls
@@ -49,6 +53,9 @@ pyproject.toml           — Package metadata and dependencies
   `retrieval_agent/agent.run_retrieval_agent()` → `resolver.resolve_pointers()`
 - **Storage factory:** `storage/factory.py` → `LocalStorageBackend` (default) +
   optional `GitHubBackupBackend`
+- **Consolidation pipeline:** `consolidator_agent/agent.py` →
+  `ConsolidatorAgent.run_dedupe()` / `run_redistribute()` / `run_link()`.
+  Commits use the `consolidate(...)` prefix.
 
 ## Cross-Capability Flows
 
