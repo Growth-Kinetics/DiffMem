@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 import git
 from openai import OpenAI
 
-from . import _dedupe, _redistribute
+from . import _dedupe, _link, _redistribute
 from .lock import ConsolidatorLock
 
 logger = logging.getLogger(__name__)
@@ -129,11 +129,15 @@ class ConsolidatorAgent:
             )
 
     def run_link(self, window: int = 3) -> Dict[str, Any]:
-        """STUB (M4): mine commit co-occurrence and weave Obsidian wikilinks."""
-        self.logger.info("CONSOLIDATOR_LINK_STUB: not_implemented window=%d", window)
-        return {
-            "status": "not_implemented",
-            "tool": "link",
-            "commits": [],
-            "summary": f"run_link is a stub; implemented in M4. window={window}",
-        }
+        """Mine commit co-occurrence (last `window` commits) and weave
+        Obsidian-style wikilinks inline in the prose where it makes sense."""
+        with self._lock():
+            repo = self._repo()
+            return _link.run(
+                worktree=self.repo_path,
+                repo=repo,
+                prompts_dir=self.prompts_path,
+                llm_call=self._call_llm,
+                user_id=self.user_id,
+                window=window,
+            )
