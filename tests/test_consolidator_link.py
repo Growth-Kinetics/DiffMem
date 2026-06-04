@@ -22,25 +22,25 @@ def _co_commit(wt: Path, files: list[tuple[Path, str]]) -> str:
     for path, content in files:
         path.write_text(content, encoding="utf-8")
         repo.index.add([str(path.relative_to(wt))])
-    repo.index.commit("co-edit andre + lars")
+    repo.index.commit("co-edit maya + lars")
     return repo.head.commit.hexsha
 
 
-def _andre_file(wt: Path) -> Path:
+def _maya_file(wt: Path) -> Path:
     return write_person(
         wt,
-        filename="andre.md",
-        name="Andre",
+        filename="maya.md",
+        name="Maya",
         body=(
             "## About\n"
-            "Andre is the VP of Technology for Sapient. He drives the McDonald's account "
-            "and frequently collaborates with Lars Orloff on strategic alignment.\n"
+            "Maya is the VP of Technology for Acme. He drives the Project X account "
+            "and frequently collaborates with Sam Rivera on strategic alignment.\n"
         ),
         semantic={
             "type": "human",
             "role": "VP Technology",
-            "hard_cues": ["Sapient", "McDonald's"],
-            "related_entities": ["lars_orloff", "alex"],
+            "hard_cues": ["Acme", "Project X"],
+            "related_entities": ["sam_rivera", "alex"],
             "memory_strength": 0.7,
         },
     )
@@ -49,18 +49,18 @@ def _andre_file(wt: Path) -> Path:
 def _lars_file(wt: Path) -> Path:
     return write_person(
         wt,
-        filename="lars_orloff.md",
-        name="Lars Orloff",
+        filename="sam_rivera.md",
+        name="Sam Rivera",
         body=(
             "## About\n"
-            "Lars Orloff is a senior partner at Sapient who works closely with Andre on "
-            "the McDonald's account.\n"
+            "Sam Rivera is a senior partner at Acme who works closely with Maya on "
+            "the Project X account.\n"
         ),
         semantic={
             "type": "human",
             "role": "Senior Partner",
-            "hard_cues": ["Sapient", "McDonald's"],
-            "related_entities": ["andre", "alex"],
+            "hard_cues": ["Acme", "Project X"],
+            "related_entities": ["maya", "alex"],
             "memory_strength": 0.6,
         },
     )
@@ -68,7 +68,7 @@ def _lars_file(wt: Path) -> Path:
 
 def test_link_weaves_wikilinks_between_cooccurring_entities(tmp_path: Path) -> None:
     wt = build_worktree(tmp_path)
-    andre = _andre_file(wt)
+    maya = _maya_file(wt)
     lars = _lars_file(wt)
 
     # Co-occur them in a single commit.
@@ -76,39 +76,39 @@ def test_link_weaves_wikilinks_between_cooccurring_entities(tmp_path: Path) -> N
         wt,
         [
             (
-                andre,
-                andre.read_text(encoding="utf-8").replace(
-                    "VP of Technology for Sapient", "VP of Technology for Sapient (updated)"
+                maya,
+                maya.read_text(encoding="utf-8").replace(
+                    "VP of Technology for Acme", "VP of Technology for Acme (updated)"
                 ),
             ),
             (
                 lars,
                 lars.read_text(encoding="utf-8").replace(
-                    "senior partner at Sapient", "senior partner at Sapient (updated)"
+                    "senior partner at Acme", "senior partner at Acme (updated)"
                 ),
             ),
         ],
     )
 
     # FakeLLM script:
-    #  - When the prompt mentions andre.md, propose linking to lars_orloff.
-    #  - When the prompt mentions lars_orloff.md, propose linking to andre.
+    #  - When the prompt mentions maya.md, propose linking to sam_rivera.
+    #  - When the prompt mentions sam_rivera.md, propose linking to maya.
     def llm_fn(prompt: str, is_json: bool):
-        if "FILE — `memories/people/andre.md`" in prompt:
+        if "FILE — `memories/people/maya.md`" in prompt:
             return {
                 "edits": [
                     {
-                        "search_text": "collaborates with Lars Orloff",
-                        "replacement_text": "collaborates with [[memories/people/lars_orloff|Lars Orloff]]",
+                        "search_text": "collaborates with Sam Rivera",
+                        "replacement_text": "collaborates with [[memories/people/sam_rivera|Sam Rivera]]",
                     }
                 ]
             }
-        if "FILE — `memories/people/lars_orloff.md`" in prompt:
+        if "FILE — `memories/people/sam_rivera.md`" in prompt:
             return {
                 "edits": [
                     {
-                        "search_text": "works closely with Andre",
-                        "replacement_text": "works closely with [[memories/people/andre|Andre]]",
+                        "search_text": "works closely with Maya",
+                        "replacement_text": "works closely with [[memories/people/maya|Maya]]",
                     }
                 ]
             }
@@ -130,16 +130,16 @@ def test_link_weaves_wikilinks_between_cooccurring_entities(tmp_path: Path) -> N
     assert len(result["commits"]) == 1
     assert result["window"] == 3
 
-    a_content = andre.read_text(encoding="utf-8")
+    a_content = maya.read_text(encoding="utf-8")
     l_content = lars.read_text(encoding="utf-8")
-    assert "[[memories/people/lars_orloff|Lars Orloff]]" in a_content
-    assert "[[memories/people/andre|Andre]]" in l_content
+    assert "[[memories/people/sam_rivera|Sam Rivera]]" in a_content
+    assert "[[memories/people/maya|Maya]]" in l_content
 
     # SEMANTIC INDEX untouched.
     assert "## SEMANTIC INDEX" in a_content
     assert "## SEMANTIC INDEX" in l_content
     si_line_a = a_content.split("## SEMANTIC INDEX", 1)[1].strip().splitlines()[0]
-    assert json.loads(si_line_a)["name"] == "Andre"
+    assert json.loads(si_line_a)["name"] == "Maya"
 
     # Commit message correct.
     repo = git.Repo(wt)
@@ -151,37 +151,37 @@ def test_link_weaves_wikilinks_between_cooccurring_entities(tmp_path: Path) -> N
 def test_link_is_idempotent(tmp_path: Path) -> None:
     """Running run_link twice should produce only one new commit, not two."""
     wt = build_worktree(tmp_path)
-    andre = _andre_file(wt)
+    maya = _maya_file(wt)
     lars = _lars_file(wt)
     _co_commit(
         wt,
         [
-            (andre, andre.read_text() + "\n## Note\nshared edit\n"),
+            (maya, maya.read_text() + "\n## Note\nshared edit\n"),
             (lars, lars.read_text() + "\n## Note\nshared edit\n"),
         ],
     )
 
     def llm_fn(prompt: str, is_json: bool):
-        if "FILE — `memories/people/andre.md`" in prompt:
-            # Only propose link if Lars's wikilink isn't already present.
-            if "lars_orloff|" in prompt[prompt.find("FILE"):prompt.find("CO-OCCURRING")]:
+        if "FILE — `memories/people/maya.md`" in prompt:
+            # Only propose link if Sam's wikilink isn't already present.
+            if "sam_rivera|" in prompt[prompt.find("FILE"):prompt.find("CO-OCCURRING")]:
                 return {"edits": []}
             return {
                 "edits": [
                     {
-                        "search_text": "collaborates with Lars Orloff",
-                        "replacement_text": "collaborates with [[memories/people/lars_orloff|Lars Orloff]]",
+                        "search_text": "collaborates with Sam Rivera",
+                        "replacement_text": "collaborates with [[memories/people/sam_rivera|Sam Rivera]]",
                     }
                 ]
             }
-        if "FILE — `memories/people/lars_orloff.md`" in prompt:
-            if "andre|" in prompt[prompt.find("FILE"):prompt.find("CO-OCCURRING")]:
+        if "FILE — `memories/people/sam_rivera.md`" in prompt:
+            if "maya|" in prompt[prompt.find("FILE"):prompt.find("CO-OCCURRING")]:
                 return {"edits": []}
             return {
                 "edits": [
                     {
-                        "search_text": "works closely with Andre",
-                        "replacement_text": "works closely with [[memories/people/andre|Andre]]",
+                        "search_text": "works closely with Maya",
+                        "replacement_text": "works closely with [[memories/people/maya|Maya]]",
                     }
                 ]
             }
@@ -208,7 +208,7 @@ def test_link_is_idempotent(tmp_path: Path) -> None:
 
 def test_link_window_zero_means_no_cooccurrence(tmp_path: Path) -> None:
     wt = build_worktree(tmp_path)
-    _andre_file(wt)
+    _maya_file(wt)
     _lars_file(wt)
     # Don't co-edit; each is in its own commit (write_person commits individually).
 

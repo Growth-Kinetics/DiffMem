@@ -1,5 +1,5 @@
 # CAPABILITY: Integration tests for run_dedupe.
-# INPUTS: tmp_path -> built fixture worktree with two Andres.
+# INPUTS: tmp_path -> built fixture worktree with two Mayas.
 # OUTPUTS: Verifies merge, survivor selection, aliases, commit message,
 #          and that no-match cases are silently skipped.
 # CONSTRAINTS: No network. FakeLLM injected via ConsolidatorAgent(llm_call=...).
@@ -20,31 +20,31 @@ from diffmem.consolidator_agent.agent import ConsolidatorAgent
 # --- helpers ------------------------------------------------------------------
 
 
-def _andre_long() -> dict:
+def _maya_long() -> dict:
     return {
-        "name": "Andre",
+        "name": "Maya",
         "type": "human",
-        "role": "VP of Technology, Sapient",
+        "role": "VP of Technology, Acme",
         "strength": "High",
-        "hard_cues": ["Sapient", "McDonald's", "Chicago", "Japan", "Snowflake"],
-        "soft_cues": ["aligning the sharks", "high-level operator"],
+        "hard_cues": ["Acme", "Project X", "Phoenix", "Northgate", "Helios"],
+        "soft_cues": ["aligning the partners", "high-level operator"],
         "emotional_cues": ["tactical friction"],
-        "related_entities": ["alex", "lars_orloff", "greg", "david"],
+        "related_entities": ["alex", "sam_rivera", "greg", "david"],
         "memory_strength": 0.9,
         "number_of_edits": 9,
     }
 
 
-def _andre_short() -> dict:
+def _maya_short() -> dict:
     return {
-        "name": "Andre",
+        "name": "Maya",
         "type": "human",
-        "role": "Head of Technical Sales at Sapient",
+        "role": "Head of Technical Sales at Acme",
         "strength": "Low",
-        "hard_cues": ["Sapient", "Publicis", "Japan", "APAC markets"],
+        "hard_cues": ["Acme", "Globex", "Northgate", "Northgate region"],
         "soft_cues": ["frenemy dynamic"],
         "emotional_cues": ["competitive tension"],
-        "related_entities": ["alex", "mcdonalds_japan", "sapient"],
+        "related_entities": ["alex", "project_x", "acme"],
         "memory_strength": 0.2,
         "number_of_edits": 1,
     }
@@ -52,16 +52,16 @@ def _andre_short() -> dict:
 
 def _make_merged_content(survivor_path: str, loser_stem: str) -> str:
     """The fake-LLM's merge payload — minimal but well-formed."""
-    si = _andre_long()
+    si = _maya_long()
     si["aliases"] = [loser_stem]
-    si["hard_cues"] = sorted(set(_andre_long()["hard_cues"]) | set(_andre_short()["hard_cues"]))
+    si["hard_cues"] = sorted(set(_maya_long()["hard_cues"]) | set(_maya_short()["hard_cues"]))
     si["related_entities"] = sorted(
-        set(_andre_long()["related_entities"]) | set(_andre_short()["related_entities"])
+        set(_maya_long()["related_entities"]) | set(_maya_short()["related_entities"])
     )
     si["file"] = survivor_path
     return (
-        "# Andre (from Sapient)\n\n"
-        "## Role\nVP of Technology, Sapient. Also covers technical sales across APAC.\n\n"
+        "# Maya (from Acme)\n\n"
+        "## Role\nVP of Technology, Acme. Also covers technical sales across APAC.\n\n"
         "## Merged from " + loser_stem + "\nIncludes prior Head-of-Technical-Sales framing.\n\n"
         "## SEMANTIC INDEX\n" + json.dumps(si, separators=(",", ":")) + "\n"
     )
@@ -70,26 +70,26 @@ def _make_merged_content(survivor_path: str, loser_stem: str) -> str:
 # --- the canonical test -------------------------------------------------------
 
 
-def test_two_andres_merge(tmp_path: Path) -> None:
+def test_two_mayas_merge(tmp_path: Path) -> None:
     wt = build_worktree(tmp_path)
 
-    # The high-strength Andre.
+    # The high-strength Maya.
     write_person(
         wt,
-        filename="andre_(sapient).md",
-        name="Andre (from Sapient)",
-        body="Andre is the VP of Technology for Sapient. Based in Chicago. McDonald's account.",
-        semantic=_andre_long(),
-        commit_msg="add andre (long)",
+        filename="maya_(acme).md",
+        name="Maya (from Acme)",
+        body="Maya is the VP of Technology for Acme. Based in Phoenix. Project X account.",
+        semantic=_maya_long(),
+        commit_msg="add maya (long)",
     )
-    # The low-strength Andre.
+    # The low-strength Maya.
     write_person(
         wt,
-        filename="andre.md",
-        name="Andre",
-        body="Andre is the Head of Technical Sales at Sapient. Pushes sales in APAC.",
-        semantic=_andre_short(),
-        commit_msg="add andre (short)",
+        filename="maya.md",
+        name="Maya",
+        body="Maya is the Head of Technical Sales at Acme. Pushes sales in APAC.",
+        semantic=_maya_short(),
+        commit_msg="add maya (short)",
     )
 
     llm = FakeLLM()
@@ -98,12 +98,12 @@ def test_two_andres_merge(tmp_path: Path) -> None:
         payload={
             "same_entity": True,
             "confidence": "high",
-            "rationale": "Both describe Andre at Sapient.",
+            "rationale": "Both describe Maya at Acme.",
         },
     )
     llm.add_response(
         matches="Dedupe Merge",
-        payload=_make_merged_content("memories/people/andre_(sapient).md", "andre"),
+        payload=_make_merged_content("memories/people/maya_(acme).md", "maya"),
     )
 
     agent = ConsolidatorAgent(
@@ -121,8 +121,8 @@ def test_two_andres_merge(tmp_path: Path) -> None:
     assert result["merges_performed"] == 1
     assert len(result["commits"]) >= 1
 
-    survivor = wt / "memories" / "people" / "andre_(sapient).md"
-    loser = wt / "memories" / "people" / "andre.md"
+    survivor = wt / "memories" / "people" / "maya_(acme).md"
+    loser = wt / "memories" / "people" / "maya.md"
     assert survivor.exists(), "survivor file should remain"
     assert not loser.exists(), "loser file should be git-removed"
 
@@ -131,12 +131,12 @@ def test_two_andres_merge(tmp_path: Path) -> None:
     assert "## SEMANTIC INDEX" in content
     si_line = content.split("## SEMANTIC INDEX", 1)[1].strip().splitlines()[0]
     si = json.loads(si_line)
-    assert "andre" in si.get("aliases", []), f"aliases must include 'andre', got {si.get('aliases')}"
+    assert "maya" in si.get("aliases", []), f"aliases must include 'maya', got {si.get('aliases')}"
 
     # Commit message matches the protocol.
     repo = git.Repo(wt)
     last_msgs = [c.message.strip() for c in repo.iter_commits(max_count=5)]
-    assert any(m.startswith("consolidate(dedupe): andre_(sapient) \u2190 andre") for m in last_msgs), last_msgs
+    assert any(m.startswith("consolidate(dedupe): maya_(acme) \u2190 maya") for m in last_msgs), last_msgs
 
     # index.md rebuilt.
     assert (wt / "index.md").exists()
@@ -146,17 +146,17 @@ def test_low_confidence_does_not_merge(tmp_path: Path) -> None:
     wt = build_worktree(tmp_path)
     write_person(
         wt,
-        filename="andre_(sapient).md",
-        name="Andre (from Sapient)",
-        body="VP at Sapient.",
-        semantic=_andre_long(),
+        filename="maya_(acme).md",
+        name="Maya (from Acme)",
+        body="VP at Acme.",
+        semantic=_maya_long(),
     )
     write_person(
         wt,
-        filename="andre.md",
-        name="Andre",
-        body="Head of technical sales at Sapient.",
-        semantic=_andre_short(),
+        filename="maya.md",
+        name="Maya",
+        body="Head of technical sales at Acme.",
+        semantic=_maya_short(),
     )
 
     llm = FakeLLM()
@@ -176,23 +176,23 @@ def test_low_confidence_does_not_merge(tmp_path: Path) -> None:
 
     assert result["candidates_evaluated"] >= 1
     assert result["merges_performed"] == 0
-    assert (wt / "memories" / "people" / "andre.md").exists()
-    assert (wt / "memories" / "people" / "andre_(sapient).md").exists()
+    assert (wt / "memories" / "people" / "maya.md").exists()
+    assert (wt / "memories" / "people" / "maya_(acme).md").exists()
 
 
 def test_unrelated_entities_not_paired(tmp_path: Path) -> None:
     wt = build_worktree(tmp_path)
     write_person(
         wt,
-        filename="andre.md",
-        name="Andre",
-        body="VP at Sapient.",
-        semantic=_andre_long(),
+        filename="maya.md",
+        name="Maya",
+        body="VP at Acme.",
+        semantic=_maya_long(),
     )
     write_person(
         wt,
         filename="beatrice.md",
-        name="Beatrice",
+        name="Priya",
         body="Friend from Lisbon.",
         semantic={
             "type": "human",
@@ -225,17 +225,17 @@ def test_survivor_is_higher_strength_even_if_listed_second(tmp_path: Path) -> No
     # Short (low strength) created FIRST.
     write_person(
         wt,
-        filename="andre.md",
-        name="Andre",
+        filename="maya.md",
+        name="Maya",
         body="Sales.",
-        semantic=_andre_short(),
+        semantic=_maya_short(),
     )
     write_person(
         wt,
-        filename="andre_(sapient).md",
-        name="Andre (from Sapient)",
+        filename="maya_(acme).md",
+        name="Maya (from Acme)",
         body="VP technology.",
-        semantic=_andre_long(),
+        semantic=_maya_long(),
     )
 
     llm = FakeLLM()
@@ -245,7 +245,7 @@ def test_survivor_is_higher_strength_even_if_listed_second(tmp_path: Path) -> No
     )
     llm.add_response(
         matches="Dedupe Merge",
-        payload=_make_merged_content("memories/people/andre_(sapient).md", "andre"),
+        payload=_make_merged_content("memories/people/maya_(acme).md", "maya"),
     )
 
     agent = ConsolidatorAgent(
@@ -257,5 +257,5 @@ def test_survivor_is_higher_strength_even_if_listed_second(tmp_path: Path) -> No
     )
     result = agent.run_dedupe()
     assert result["merges_performed"] == 1
-    assert (wt / "memories" / "people" / "andre_(sapient).md").exists()
-    assert not (wt / "memories" / "people" / "andre.md").exists()
+    assert (wt / "memories" / "people" / "maya_(acme).md").exists()
+    assert not (wt / "memories" / "people" / "maya.md").exists()

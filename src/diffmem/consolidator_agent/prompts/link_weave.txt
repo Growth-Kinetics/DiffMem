@@ -4,15 +4,15 @@ You have one entity file and a ranked list of co-occurring entities (entities
 that have changed in the same recent commits). Your job is to weave
 Obsidian-style wikilinks INLINE into the file's prose where it makes sense.
 
-Wikilink format (mandatory): `[[memories/people/andre|Andre]]` — full vault
+Wikilink format (mandatory): `[[memories/people/maya|Maya]]` — full vault
 path (without `.md`) + a pipe + display name. Other paths:
-`[[memories/contexts/data_governance|Data Governance]]`,
+`[[memories/contexts/project_x|Project X]]`,
 `[[memories/people/alex|Alex]]`.
 
 Rules:
 1. Only insert a wikilink where the linked entity is ALREADY mentioned in the
    prose. Don't invent mentions to justify a link.
-2. ONE link per entity per file. If "Andre" is mentioned 5 times in this file,
+2. ONE link per entity per file. If a name is mentioned 5 times in this file,
    link the FIRST or most prominent mention only.
 3. NEVER touch the `## SEMANTIC INDEX` JSON block at the bottom. Skip it.
 4. If a wikilink to the target entity already exists anywhere in the file,
@@ -29,8 +29,8 @@ Return ONLY this JSON (no prose, no fences):
 {{
   "edits": [
     {{
-      "search_text": "Andre is the VP of Technology",
-      "replacement_text": "[[memories/people/andre|Andre]] is the VP of Technology"
+      "search_text": "Maya is the VP of Engineering",
+      "replacement_text": "[[memories/people/maya|Maya]] is the VP of Engineering"
     }}
   ]
 }}

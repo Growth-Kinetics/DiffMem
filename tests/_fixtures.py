@@ -127,7 +127,7 @@ class FakeLLM:
     Usage:
         llm = FakeLLM()
         llm.add_response(matches="dedupe_judge", payload={"same_entity": True, "confidence": "high", "rationale": "..."})
-        llm.add_response(matches="dedupe_merge", payload="# Andre\\n...full merged content...\\n")
+        llm.add_response(matches="dedupe_merge", payload="# Maya\\n...full merged content...\\n")
     """
 
     def __init__(self) -> None:

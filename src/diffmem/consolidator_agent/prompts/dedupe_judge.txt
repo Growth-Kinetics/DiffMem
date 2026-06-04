@@ -12,7 +12,7 @@ Strict rules:
 3. Consider: full names, roles, employers, places, related entities, biographical
    facts. Two people with the same first name and different employers are NOT
    the same entity.
-4. Aliases and disambiguators in filenames (e.g. `andre_(sapient).md`) are
+4. Aliases and disambiguators in filenames (e.g. `name_(employer).md`) are
    strong signals that the disambiguator describes the same person under a
    bare name elsewhere.
 
@@ -20,7 +20,7 @@ Return ONLY this JSON (no prose, no markdown fence):
 {{
   "same_entity": true,
   "confidence": "high",
-  "rationale": "Both describe Andre at Sapient working on McDonald's. The bare 'andre.md' is the same person as 'andre_(sapient).md'."
+  "rationale": "Both files describe the same person at the same employer; the bare 'maya.md' is the same person as 'maya_(acme).md' — the parenthetical is a disambiguator, not a different individual."
 }}
 
 ---

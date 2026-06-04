@@ -35,9 +35,9 @@ def test_consolidate_runs_canonical_order_and_respects_tool_subset(monkeypatch, 
     wt = build_worktree(tmp_path)
     write_person(
         wt,
-        filename="andre.md",
-        name="Andre",
-        body="Andre is VP at Sapient.",
+        filename="maya.md",
+        name="Maya",
+        body="Maya is VP at Acme.",
         semantic={"type": "human", "memory_strength": 0.5, "related_entities": ["alex"]},
     )
 
@@ -159,9 +159,9 @@ def _build_test_client(monkeypatch, tmp_path: Path, llm_call=None):
     wt = build_worktree(tmp_path)
     write_person(
         wt,
-        filename="andre.md",
-        name="Andre",
-        body="Andre is at Sapient.",
+        filename="maya.md",
+        name="Maya",
+        body="Maya is at Acme.",
         semantic={"type": "human", "memory_strength": 0.5},
     )
 

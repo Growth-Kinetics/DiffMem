@@ -128,11 +128,11 @@ DiffMem uses **Obsidian-style wikilinks** as the canonical link format.
 The consolidator agent (`run_link`) generates these automatically by mining
 commit co-occurrence; you generally do not need to author them by hand.
 
-- **Format**: `[[memories/people/andre|Andre]]` — full vault path (without
+- **Format**: `[[memories/people/maya|Maya]]` — full vault path (without
   `.md` suffix) + pipe + display name.
 - **Examples**:
-  - `[[memories/people/lars_orloff|Lars Orloff]]`
-  - `[[memories/contexts/data_governance|Data Governance]]`
+  - `[[memories/people/sam_rivera|Sam Rivera]]`
+  - `[[memories/contexts/project_x|Project X]]`
   - `[[memories/people/alex|Alex]]`
 - **Purpose**: Renders as a clickable link in Obsidian (open the worktree as
   a vault) AND is greppable with `\[\[` for agents. Enables graph-style

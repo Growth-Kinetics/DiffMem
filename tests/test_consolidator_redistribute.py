@@ -21,16 +21,16 @@ from diffmem.consolidator_agent._shared import estimate_tokens
 
 
 ANDRE_BLOCK = (
-    "## Andre Section\n"
-    "Andre is the VP of Technology for Sapient (Publicis). He is based out of Chicago "
-    "and has been driving the McDonald's account. Recent collaboration has been productive "
-    "but punctuated by tactical friction. Andre has surfaced repeatedly in Alex's strategy "
+    "## Maya Section\n"
+    "Maya is the VP of Technology for Acme (Globex). He is based out of Phoenix "
+    "and has been driving the Project X account. Recent collaboration has been productive "
+    "but punctuated by tactical friction. Maya has surfaced repeatedly in Alex's strategy "
     "discussions and is a key external partner.\n"
 )
 
 DATA_GOV_BLOCK = (
-    "## Data Governance Reflections\n"
-    "Across the last year, the user has developed a strong perspective on data governance "
+    "## Project X Methodology Reflections\n"
+    "Across the last year, the user has developed a strong perspective on project methodology "
     "as a foundational discipline that bridges IT and business strategy. Three principles "
     "have emerged: ownership clarity, semantic layering, and progressive disclosure. These "
     "are increasingly central to how the user frames consulting engagements.\n"
@@ -53,7 +53,7 @@ def _write_oversized_user_entity(wt: Path, user_id: str = "alex") -> Path:
         "hard_cues": [user_id],
         "soft_cues": [],
         "emotional_cues": [],
-        "related_entities": ["andre"],
+        "related_entities": ["maya"],
         "file": f"{user_id}.md",
         "memory_strength": 1.0,
     }
@@ -88,13 +88,13 @@ def test_redistribute_moves_attributed_section_and_extracts_orphan(tmp_path: Pat
     # Small target entity — the balancing rule should prefer it.
     write_person(
         wt,
-        filename="andre.md",
-        name="Andre",
-        body="Andre is the VP at Sapient.",
+        filename="maya.md",
+        name="Maya",
+        body="Maya is the VP at Acme.",
         semantic={
             "type": "human",
             "role": "VP Technology",
-            "hard_cues": ["Sapient", "Chicago"],
+            "hard_cues": ["Acme", "Phoenix"],
             "related_entities": ["alex"],
             "memory_strength": 0.6,
         },
@@ -111,16 +111,16 @@ def test_redistribute_moves_attributed_section_and_extracts_orphan(tmp_path: Pat
         "moves": [
             {
                 "source_section": ANDRE_BLOCK,
-                "target_entity": "memories/people/andre.md",
-                "reason": "section is about Andre at Sapient",
+                "target_entity": "memories/people/maya.md",
+                "reason": "section is about Maya at Acme",
                 "extracted_content": ANDRE_BLOCK,
             }
         ],
         "new_contexts": [
             {
-                "name": "Data Governance",
+                "name": "Project X Methodology",
                 "source_section": DATA_GOV_BLOCK,
-                "extracted_content": "# Data Governance\n\n" + DATA_GOV_BLOCK,
+                "extracted_content": "# Project X Methodology\n\n" + DATA_GOV_BLOCK,
                 "reason": "thematic block, no clear subject",
             }
         ],
@@ -130,12 +130,12 @@ def test_redistribute_moves_attributed_section_and_extracts_orphan(tmp_path: Pat
     llm.add_response(
         matches="Semantic Index Builder",
         payload={
-            "name": "Data Governance",
+            "name": "Project X Methodology",
             "aliases": [],
             "type": "concept",
             "role": "thematic reference",
             "strength": "Low",
-            "hard_cues": ["data governance", "semantic layering"],
+            "hard_cues": ["project methodology", "semantic layering"],
             "soft_cues": [],
             "emotional_cues": [],
             "related_entities": ["alex"],
@@ -158,26 +158,26 @@ def test_redistribute_moves_attributed_section_and_extracts_orphan(tmp_path: Pat
     assert result["new_contexts"] == 1
     assert len(result["commits"]) >= 1
 
-    # User entity slimmed: Andre block and data gov block removed.
+    # User entity slimmed: Maya block and data gov block removed.
     new_user = user_file.read_text(encoding="utf-8")
-    assert "Andre Section" not in new_user, "attributed move should remove Andre section"
-    assert "Data Governance Reflections" not in new_user, "orphan extraction should remove data-gov section"
+    assert "Maya Section" not in new_user, "attributed move should remove Maya section"
+    assert "Project X Methodology Reflections" not in new_user, "orphan extraction should remove data-gov section"
     # SEMANTIC INDEX preserved.
     assert "## SEMANTIC INDEX" in new_user
 
-    # Andre file received the moved section.
-    andre = (wt / "memories" / "people" / "andre.md").read_text(encoding="utf-8")
-    assert "Andre Section" in andre
-    # SEMANTIC INDEX still last in Andre file.
-    assert andre.rstrip().endswith("}") or "SEMANTIC INDEX" in andre.split("Andre Section")[-1]
+    # Maya file received the moved section.
+    maya = (wt / "memories" / "people" / "maya.md").read_text(encoding="utf-8")
+    assert "Maya Section" in maya
+    # SEMANTIC INDEX still last in Maya file.
+    assert maya.rstrip().endswith("}") or "SEMANTIC INDEX" in maya.split("Maya Section")[-1]
 
     # New context file created with SEMANTIC INDEX.
-    new_ctx = wt / "memories" / "contexts" / "data_governance.md"
+    new_ctx = wt / "memories" / "contexts" / "project_x_methodology.md"
     assert new_ctx.exists()
     new_ctx_content = new_ctx.read_text(encoding="utf-8")
     assert "## SEMANTIC INDEX" in new_ctx_content
     # Content preserved.
-    assert "Data Governance Reflections" in new_ctx_content
+    assert "Project X Methodology Reflections" in new_ctx_content
 
     # Commit message matches the protocol.
     repo = git.Repo(wt)
@@ -192,8 +192,8 @@ def test_no_oversized_entities_is_noop(tmp_path: Path) -> None:
     wt = build_worktree(tmp_path)
     write_person(
         wt,
-        filename="andre.md",
-        name="Andre",
+        filename="maya.md",
+        name="Maya",
         body="Short.",
         semantic={"type": "human", "memory_strength": 0.6},
     )

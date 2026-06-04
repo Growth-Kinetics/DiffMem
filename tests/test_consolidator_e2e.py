@@ -1,9 +1,9 @@
 # CAPABILITY: End-to-end smoke test of the full consolidator chain.
-# INPUTS: tmp_path -> realistic fixture (oversized user entity, two Andres,
-#         lars_orloff, alex co-occurrence pattern).
+# INPUTS: tmp_path -> realistic fixture (oversized user entity, two Mayas,
+#         sam_rivera, alex co-occurrence pattern).
 # OUTPUTS: Verifies dedupe + redistribute + link all fire in canonical order,
 #          producing three (or more) consolidate(...) commits, slimming the
-#          user entity, merging the two Andres, weaving wikilinks, and that
+#          user entity, merging the two Mayas, weaving wikilinks, and that
 #          a second run produces zero new commits (chain-level idempotency).
 # CONSTRAINTS: Scripted llm_call (no network). Validates orchestration, not
 #              prompt quality.
@@ -27,49 +27,49 @@ from diffmem.consolidator_agent._shared import estimate_tokens
 
 
 ANDRE_LONG_SI = {
-    "name": "Andre",
+    "name": "Maya",
     "type": "human",
-    "role": "VP of Technology, Sapient",
+    "role": "VP of Technology, Acme",
     "strength": "High",
-    "hard_cues": ["Sapient", "McDonald's", "Chicago", "Japan", "Snowflake"],
-    "soft_cues": ["aligning the sharks"],
+    "hard_cues": ["Acme", "Project X", "Phoenix", "Northgate", "Helios"],
+    "soft_cues": ["aligning the partners"],
     "emotional_cues": ["tactical friction"],
-    "related_entities": ["alex", "lars_orloff", "greg", "david"],
+    "related_entities": ["alex", "sam_rivera", "greg", "david"],
     "memory_strength": 0.9,
 }
 
 ANDRE_SHORT_SI = {
-    "name": "Andre",
+    "name": "Maya",
     "type": "human",
-    "role": "Head of Technical Sales at Sapient",
+    "role": "Head of Technical Sales at Acme",
     "strength": "Low",
-    "hard_cues": ["Sapient", "Publicis", "Japan", "APAC markets"],
+    "hard_cues": ["Acme", "Globex", "Northgate", "Northgate region"],
     "soft_cues": ["frenemy dynamic"],
     "emotional_cues": ["competitive tension"],
-    "related_entities": ["alex", "mcdonalds_japan", "sapient"],
+    "related_entities": ["alex", "project_x", "acme"],
     "memory_strength": 0.2,
 }
 
 LARS_SI = {
     "type": "human",
-    "role": "Senior Partner at Sapient",
-    "hard_cues": ["Sapient", "McDonald's", "Beacon"],
-    "related_entities": ["andre", "alex", "greg"],
+    "role": "Senior Partner at Acme",
+    "hard_cues": ["Acme", "Project X", "Initech"],
+    "related_entities": ["maya", "alex", "greg"],
     "memory_strength": 0.6,
 }
 
 ATTRIBUTED_ANDRE_BLOCK = (
-    "## Andre Section\n"
+    "## Maya Section\n"
     + (
-        "Andre is a key external partner. His operational pattern is to surface for "
-        "high-level strategy meetings then disappear. McDonald's account work has been "
+        "Maya is a key external partner. His operational pattern is to surface for "
+        "high-level strategy meetings then disappear. Project X account work has been "
         "challenging given his style. "
     ) * 25  # ~5k chars
     + "\n"
 )
 
 DATA_GOV_BLOCK = (
-    "## Reflections on Data Governance\n"
+    "## Reflections on Project X Methodology\n"
     + (
         "Three principles drive the user's approach: ownership clarity, semantic "
         "layering, and progressive disclosure. These shape every consulting engagement. "
@@ -93,7 +93,7 @@ def _build_realistic_worktree(tmp_path: Path) -> Path:
         "hard_cues": ["alex"],
         "soft_cues": [],
         "emotional_cues": [],
-        "related_entities": ["andre", "lars_orloff"],
+        "related_entities": ["maya", "sam_rivera"],
         "file": "alex.md",
         "memory_strength": 1.0,
     }
@@ -116,33 +116,33 @@ def _build_realistic_worktree(tmp_path: Path) -> Path:
     repo.index.add(["alex.md"])
     repo.index.commit("inflate user entity")
 
-    # Two Andres (different filenames, both about the same person).
+    # Two Mayas (different filenames, both about the same person).
     write_person(
         wt,
-        filename="andre_(sapient).md",
-        name="Andre (from Sapient)",
-        body="Andre is the VP of Technology for Sapient. Based in Chicago. Drives McDonald's.",
+        filename="maya_(acme).md",
+        name="Maya (from Acme)",
+        body="Maya is the VP of Technology for Acme. Based in Phoenix. Drives Project X.",
         semantic=ANDRE_LONG_SI,
     )
     write_person(
         wt,
-        filename="andre.md",
-        name="Andre",
-        body="Andre is the Head of Technical Sales at Sapient. Aggressive APAC push.",
+        filename="maya.md",
+        name="Maya",
+        body="Maya is the Head of Technical Sales at Acme. Aggressive APAC push.",
         semantic=ANDRE_SHORT_SI,
     )
 
-    # Lars Orloff (will co-occur with Andre in a commit).
+    # Sam Rivera (will co-occur with Maya in a commit).
     write_person(
         wt,
-        filename="lars_orloff.md",
-        name="Lars Orloff",
-        body="Lars is a senior partner at Sapient. Frequently aligned with Andre on McDonald's.",
+        filename="sam_rivera.md",
+        name="Sam Rivera",
+        body="Sam is a senior partner at Acme. Frequently aligned with Maya on Project X.",
         semantic=LARS_SI,
     )
 
     # A few other entities to fill out the people directory.
-    for n in ("beatrice", "kenichiro_tanaka", "david", "greg"):
+    for n in ("beatrice", "priya_devi", "david", "greg"):
         write_person(
             wt,
             filename=f"{n}.md",
@@ -151,25 +151,25 @@ def _build_realistic_worktree(tmp_path: Path) -> Path:
             semantic={"type": "human", "memory_strength": 0.3, "related_entities": ["alex"]},
         )
 
-    # Co-occurrence: edit andre_(sapient) and lars_orloff in the same commit.
-    andre_long = wt / "memories" / "people" / "andre_(sapient).md"
-    lars = wt / "memories" / "people" / "lars_orloff.md"
-    andre_long.write_text(
-        andre_long.read_text(encoding="utf-8")
-        + "\n## Update\nWorked with Lars Orloff on strategy.\n",
+    # Co-occurrence: edit maya_(acme) and sam_rivera in the same commit.
+    maya_long = wt / "memories" / "people" / "maya_(acme).md"
+    lars = wt / "memories" / "people" / "sam_rivera.md"
+    maya_long.write_text(
+        maya_long.read_text(encoding="utf-8")
+        + "\n## Update\nWorked with Sam Rivera on strategy.\n",
         encoding="utf-8",
     )
     lars.write_text(
-        lars.read_text(encoding="utf-8") + "\n## Update\nMeeting with Andre on strategy.\n",
+        lars.read_text(encoding="utf-8") + "\n## Update\nMeeting with Maya on strategy.\n",
         encoding="utf-8",
     )
     repo.index.add(
         [
-            str(andre_long.relative_to(wt)),
+            str(maya_long.relative_to(wt)),
             str(lars.relative_to(wt)),
         ]
     )
-    repo.index.commit("co-edit: andre + lars strategy session")
+    repo.index.commit("co-edit: maya + lars strategy session")
 
     return wt
 
@@ -177,20 +177,20 @@ def _build_realistic_worktree(tmp_path: Path) -> Path:
 # --- scripted LLM -------------------------------------------------------------
 
 
-def _make_merged_andre_content(loser_stem: str) -> str:
+def _make_merged_maya_content(loser_stem: str) -> str:
     si = dict(ANDRE_LONG_SI)
     si["aliases"] = [loser_stem]
     si["hard_cues"] = sorted(set(ANDRE_LONG_SI["hard_cues"]) | set(ANDRE_SHORT_SI["hard_cues"]))
     si["related_entities"] = sorted(
         set(ANDRE_LONG_SI["related_entities"]) | set(ANDRE_SHORT_SI["related_entities"])
     )
-    si["file"] = "memories/people/andre_(sapient).md"
+    si["file"] = "memories/people/maya_(acme).md"
     return (
-        "# Andre (from Sapient)\n\n"
-        "Andre is the VP of Technology for Sapient. He also drives technical sales across APAC "
-        "(previously framed as 'Head of Technical Sales'). Based in Chicago; recurring trips to Japan.\n\n"
+        "# Maya (from Acme)\n\n"
+        "Maya is the VP of Technology for Acme. He also drives technical sales across APAC "
+        "(previously framed as 'Head of Technical Sales'). Based in Phoenix; recurring trips to Northgate.\n\n"
         "## Merged from " + loser_stem + "\n\n"
-        "## Update\nWorked with Lars Orloff on strategy.\n\n"
+        "## Update\nWorked with Sam Rivera on strategy.\n\n"
         "## SEMANTIC INDEX\n" + json.dumps(si, separators=(",", ":")) + "\n"
     )
 
@@ -205,31 +205,31 @@ def _scripted_llm():
             return {
                 "same_entity": True,
                 "confidence": "high",
-                "rationale": "Both files describe Andre at Sapient.",
+                "rationale": "Both files describe Maya at Acme.",
             }
         if "Dedupe Merge" in prompt:
             # Extract loser stem from the prompt context.
             m = re.search(r"LOSER .*?`memories/people/(.+?)\.md`", prompt, re.DOTALL)
-            loser_stem = m.group(1) if m else "andre"
-            return _make_merged_andre_content(loser_stem)
+            loser_stem = m.group(1) if m else "maya"
+            return _make_merged_maya_content(loser_stem)
 
         if "Redistribute Analyst" in prompt:
-            # Only fire for alex.md (the user entity); leave merged-andre alone.
+            # Only fire for alex.md (the user entity); leave merged-maya alone.
             if "SOURCE FILE \u2014 `alex.md`" in prompt:
                 return {
                     "moves": [
                         {
                             "source_section": ATTRIBUTED_ANDRE_BLOCK,
-                            "target_entity": "memories/people/andre_(sapient).md",
-                            "reason": "section is attributed to Andre",
+                            "target_entity": "memories/people/maya_(acme).md",
+                            "reason": "section is attributed to Maya",
                             "extracted_content": ATTRIBUTED_ANDRE_BLOCK,
                         }
                     ],
                     "new_contexts": [
                         {
-                            "name": "Data Governance",
+                            "name": "Project X Methodology",
                             "source_section": DATA_GOV_BLOCK,
-                            "extracted_content": "# Data Governance\n\n" + DATA_GOV_BLOCK,
+                            "extracted_content": "# Project X Methodology\n\n" + DATA_GOV_BLOCK,
                             "reason": "thematic block, no clear subject in candidates",
                         }
                     ],
@@ -238,12 +238,12 @@ def _scripted_llm():
 
         if "Semantic Index Builder" in prompt:
             return {
-                "name": "Data Governance",
+                "name": "Project X Methodology",
                 "aliases": [],
                 "type": "concept",
                 "role": "thematic reference",
                 "strength": "Low",
-                "hard_cues": ["data governance"],
+                "hard_cues": ["project methodology"],
                 "soft_cues": [],
                 "emotional_cues": [],
                 "related_entities": ["alex"],
@@ -255,26 +255,26 @@ def _scripted_llm():
             file_section_marker = "FILE \u2014 `"
             file_section_start = prompt.find(file_section_marker)
             file_section = prompt[file_section_start:] if file_section_start != -1 else ""
-            if "FILE \u2014 `memories/people/andre_(sapient).md`" in prompt:
-                if "lars_orloff|" in file_section:
+            if "FILE \u2014 `memories/people/maya_(acme).md`" in prompt:
+                if "sam_rivera|" in file_section:
                     return {"edits": []}
                 state["link_runs"] += 1
                 return {
                     "edits": [
                         {
-                            "search_text": "Worked with Lars Orloff",
-                            "replacement_text": "Worked with [[memories/people/lars_orloff|Lars Orloff]]",
+                            "search_text": "Worked with Sam Rivera",
+                            "replacement_text": "Worked with [[memories/people/sam_rivera|Sam Rivera]]",
                         }
                     ]
                 }
-            if "FILE \u2014 `memories/people/lars_orloff.md`" in prompt:
-                if "andre_(sapient)|" in file_section or "/andre_(sapient)]]" in file_section:
+            if "FILE \u2014 `memories/people/sam_rivera.md`" in prompt:
+                if "maya_(acme)|" in file_section or "/maya_(acme)]]" in file_section:
                     return {"edits": []}
                 return {
                     "edits": [
                         {
-                            "search_text": "Meeting with Andre",
-                            "replacement_text": "Meeting with [[memories/people/andre_(sapient)|Andre]]",
+                            "search_text": "Meeting with Maya",
+                            "replacement_text": "Meeting with [[memories/people/maya_(acme)|Maya]]",
                         }
                     ]
                 }
@@ -295,8 +295,8 @@ def test_full_chain_smoke(monkeypatch, tmp_path: Path) -> None:
     wt = _build_realistic_worktree(tmp_path)
 
     # Sanity: pre-state.
-    assert (wt / "memories" / "people" / "andre.md").exists()
-    assert (wt / "memories" / "people" / "andre_(sapient).md").exists()
+    assert (wt / "memories" / "people" / "maya.md").exists()
+    assert (wt / "memories" / "people" / "maya_(acme).md").exists()
     user_file = wt / "alex.md"
     pre_tokens = estimate_tokens(user_file.read_text(encoding="utf-8"))
     soft_cap = 2_000
@@ -332,24 +332,24 @@ def test_full_chain_smoke(monkeypatch, tmp_path: Path) -> None:
     assert result["results"]["redistribute"]["new_contexts"] == 1
     assert result["results"]["link"]["links_added"] >= 2
 
-    # 1) Two Andres → one.
-    assert (wt / "memories" / "people" / "andre_(sapient).md").exists()
-    assert not (wt / "memories" / "people" / "andre.md").exists()
+    # 1) Two Mayas → one.
+    assert (wt / "memories" / "people" / "maya_(acme).md").exists()
+    assert not (wt / "memories" / "people" / "maya.md").exists()
 
     # 2) User entity slimmed below cap.
     post_tokens = estimate_tokens(user_file.read_text(encoding="utf-8"))
     assert post_tokens < soft_cap, f"post tokens {post_tokens} should be below cap {soft_cap}"
 
     # 3) New contexts file extracted.
-    new_ctx = wt / "memories" / "contexts" / "data_governance.md"
+    new_ctx = wt / "memories" / "contexts" / "project_x_methodology.md"
     assert new_ctx.exists()
     assert "## SEMANTIC INDEX" in new_ctx.read_text(encoding="utf-8")
 
-    # 4) Wikilink in merged andre file (or lars).
-    andre_post = (wt / "memories" / "people" / "andre_(sapient).md").read_text(encoding="utf-8")
-    lars_post = (wt / "memories" / "people" / "lars_orloff.md").read_text(encoding="utf-8")
-    assert "[[memories/people/lars_orloff|Lars Orloff]]" in andre_post \
-        or "[[memories/people/andre_(sapient)|Andre]]" in lars_post
+    # 4) Wikilink in merged maya file (or lars).
+    maya_post = (wt / "memories" / "people" / "maya_(acme).md").read_text(encoding="utf-8")
+    lars_post = (wt / "memories" / "people" / "sam_rivera.md").read_text(encoding="utf-8")
+    assert "[[memories/people/sam_rivera|Sam Rivera]]" in maya_post \
+        or "[[memories/people/maya_(acme)|Maya]]" in lars_post
 
     # 5) Three commit prefixes present in canonical order.
     repo = git.Repo(wt)
@@ -372,9 +372,9 @@ def test_full_chain_smoke(monkeypatch, tmp_path: Path) -> None:
 
     # 6) Master index reflects the merged state.
     idx = (wt / "index.md").read_text(encoding="utf-8")
-    assert "andre_(sapient)" in idx.lower() or "andre (from sapient)" in idx.lower()
-    # The losing andre.md should not appear as an independent entity.
-    assert "memories/people/andre.md" not in idx
+    assert "maya_(acme)" in idx.lower() or "maya (from acme)" in idx.lower()
+    # The losing maya.md should not appear as an independent entity.
+    assert "memories/people/maya.md" not in idx
 
     # 7) Idempotency: running again produces no new merge / move / link commits.
     head_before = repo.head.commit.hexsha

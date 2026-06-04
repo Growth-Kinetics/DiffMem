@@ -71,7 +71,7 @@ def _build_cooccurrence(
 
 
 def _vault_path(rel_path: str) -> str:
-    """Strip the .md suffix for Obsidian wikilink. memories/people/andre.md -> memories/people/andre."""
+    """Strip the .md suffix for Obsidian wikilink. memories/people/maya.md -> memories/people/maya."""
     if rel_path.endswith(".md"):
         return rel_path[:-3]
     return rel_path

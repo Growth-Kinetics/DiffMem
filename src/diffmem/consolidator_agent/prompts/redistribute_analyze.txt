@@ -6,12 +6,13 @@ elsewhere and propose specific moves.
 
 Two kinds of redistribution:
 1. **Attributed-content moves**: A section whose real subject is a DIFFERENT
-   existing entity (e.g. a long paragraph about Andre living inside Alex's
-   user entity → move to memories/people/andre.md). Use the candidate-entity
+   existing entity (e.g. a long paragraph about a colleague living inside the
+   user entity → move to the colleague's file). Use the candidate-entity
    list below.
 2. **Orphan-theme extraction**: A coherent thematic block with no clear
-   subject in the candidate list (e.g. an essay on "data governance philosophy")
-   → propose creating a new `memories/contexts/{{slug}}.md` file.
+   subject in the candidate list (e.g. an essay on a recurring topic with
+   no single subject) → propose creating a new `memories/contexts/{{slug}}.md`
+   file.
 
 Rules:
 - Quote `source_section` EXACTLY as it appears in the source file (so the
@@ -35,15 +36,15 @@ Return ONLY this JSON (no prose, no fences):
   "moves": [
     {{
       "source_section": "literal text block from source file...",
-      "target_entity": "memories/people/andre.md",
-      "reason": "section is about Andre's role at Sapient",
-      "extracted_content": "cleaned-up text to append to andre.md..."
+      "target_entity": "memories/people/colleague.md",
+      "reason": "section is attributed to the colleague",
+      "extracted_content": "cleaned-up text to append to the target file..."
     }}
   ],
   "new_contexts": [
     {{
-      "name": "data_governance",
-      "extracted_content": "full content of the new contexts/data_governance.md file (including a # H1 header and prose body, but NOT a SEMANTIC INDEX — that gets generated separately)",
+      "name": "theme_name",
+      "extracted_content": "full content of the new contexts/theme_name.md file (including a # H1 header and prose body, but NOT a SEMANTIC INDEX — that gets generated separately)",
       "source_section": "literal text block to remove from the source file",
       "reason": "thematic block with no clear subject in candidates"
     }}

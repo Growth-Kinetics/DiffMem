@@ -39,7 +39,7 @@ if generated first; redistribution alters co-occurrence signal).
   oversized for redistribution (default 32 000 tokens, `len // 4` heuristic).
 - **Window:** runtime parameter for `run_link` — number of most-recent commits
   to mine for co-occurrence (default 3).
-- **Wikilink:** Obsidian-style `[[memories/people/andre|Andre]]` — full path
+- **Wikilink:** Obsidian-style `[[memories/people/maya|Maya]]` — full path
   inside the user vault + display name. Rendered as a link in Obsidian and
   greppable as `\[\[` for downstream agents.
 

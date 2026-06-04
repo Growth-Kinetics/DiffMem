@@ -220,7 +220,7 @@ curl -X POST "http://localhost:8000/memory/alex/consolidate" \
 curl -X POST "http://localhost:8000/memory/alex/process-commit-and-consolidate" \
   -H "Content-Type: application/json" \
   -d '{
-    "memory_input": "Met Andre again today...",
+    "memory_input": "Met Maya again today...",
     "session_id": "s-042",
     "consolidate_tools": ["dedupe", "link"]
   }'
@@ -235,13 +235,13 @@ What each tool does:
   the writer agent recognizes it on future sessions.
 - **redistribute** — scans for entities exceeding `soft_cap_tokens` (default
   32 000, `len(content)//4` heuristic), then either (a) moves attributed
-  sections to their real subject's file (e.g. content about Andre living in
-  the user entity → `memories/people/andre.md`) or (b) extracts orphan themes
-  into new `memories/contexts/{slug}.md` files. Prefers smaller target entities
-  (balancing rule).
+  sections to their real subject's file (e.g. content about a colleague
+  living in the user entity → the colleague's `memories/people/*.md`) or
+  (b) extracts orphan themes into new `memories/contexts/{slug}.md` files.
+  Prefers smaller target entities (balancing rule).
 - **link** — mines git log over the last `window` commits (default 3) for file
   co-occurrence, then asks an LLM to weave Obsidian-style wikilinks
-  (`[[memories/people/andre|Andre]]`) inline in the prose. Idempotent: existing
+  (`[[memories/people/maya|Maya]]`) inline in the prose. Idempotent: existing
   wikilinks are not duplicated. Opens the memory folder for navigation as an
   Obsidian vault.
 
