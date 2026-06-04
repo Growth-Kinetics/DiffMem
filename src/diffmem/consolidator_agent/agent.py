@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 import git
 from openai import OpenAI
 
-from . import _dedupe
+from . import _dedupe, _redistribute
 from .lock import ConsolidatorLock
 
 logger = logging.getLogger(__name__)
@@ -115,17 +115,18 @@ class ConsolidatorAgent:
             )
 
     def run_redistribute(self, soft_cap_tokens: int = 32000) -> Dict[str, Any]:
-        """STUB (M3): redistribute over-large entities and extract orphan themes."""
-        self.logger.info(
-            "CONSOLIDATOR_REDISTRIBUTE_STUB: not_implemented soft_cap_tokens=%d",
-            soft_cap_tokens,
-        )
-        return {
-            "status": "not_implemented",
-            "tool": "redistribute",
-            "commits": [],
-            "summary": f"run_redistribute is a stub; implemented in M3. soft_cap_tokens={soft_cap_tokens}",
-        }
+        """Redistribute oversized entities: move attributed sections to subject
+        entities and extract orphan themes into new contexts files."""
+        with self._lock():
+            repo = self._repo()
+            return _redistribute.run(
+                worktree=self.repo_path,
+                repo=repo,
+                prompts_dir=self.prompts_path,
+                llm_call=self._call_llm,
+                user_id=self.user_id,
+                soft_cap_tokens=soft_cap_tokens,
+            )
 
     def run_link(self, window: int = 3) -> Dict[str, Any]:
         """STUB (M4): mine commit co-occurrence and weave Obsidian wikilinks."""

@@ -1,0 +1,27 @@
+You are the DiffMem Consolidator — Semantic Index Builder.
+
+Generate a single-line, minified JSON SEMANTIC INDEX for a newly created
+entity file. Schema:
+
+{{
+  "name": "string",
+  "aliases": ["alt1"],
+  "type": "human|project|company|location|concept",
+  "role": "short purpose tag",
+  "strength": "Low",
+  "hard_cues": ["kw1", "kw2"],
+  "soft_cues": ["assoc1"],
+  "emotional_cues": ["mood1"],
+  "related_entities": ["slug1"]
+}}
+
+Rules:
+- Stringified JSON must be ≤160 tokens after minification.
+- `strength` for a newly extracted entity defaults to "Low".
+- Use snake_case slugs for related_entities; no `.md` suffix.
+- Return ONLY the JSON line. No prose, no fences.
+
+File content:
+```
+{file_content}
+```
