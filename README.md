@@ -187,6 +187,67 @@ curl -X POST "http://localhost:8000/memory/alex/context" \
 
 If `REQUIRE_AUTH=true`, add `-H "Authorization: Bearer $API_KEY"` to every request.
 
+### Consolidation
+
+DiffMem ships with an out-of-band **consolidator agent** that repairs three
+failure modes the writer agent accumulates at scale: duplicate entities, an
+overgrown user entity, and missing interlinking. It exposes three tools —
+`dedupe`, `redistribute`, `link` — invokable independently or chained.
+
+Every consolidation commit is prefixed with `consolidate(dedupe):`,
+`consolidate(redistribute):`, or `consolidate(link):` so retrieval agents and
+humans can tell repair commits apart from session-formation commits.
+
+Endpoints:
+
+- `POST /memory/{user_id}/consolidate` — run any subset of tools on demand.
+- `POST /memory/{user_id}/process-commit-and-consolidate` — ingest a session,
+  commit, then consolidate in one HTTP call.
+
+Examples:
+
+```bash
+# Full chain (dedupe → redistribute → link), defaults.
+curl -X POST "http://localhost:8000/memory/alex/consolidate" \
+  -H "Content-Type: application/json" -d '{}'
+
+# Just dedupe, with custom soft cap and link window for any tools that use them.
+curl -X POST "http://localhost:8000/memory/alex/consolidate" \
+  -H "Content-Type: application/json" \
+  -d '{"tools": ["dedupe"], "window": 5, "soft_cap_tokens": 24000}'
+
+# Ingest a session, commit, then consolidate — single call.
+curl -X POST "http://localhost:8000/memory/alex/process-commit-and-consolidate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "memory_input": "Met Andre again today...",
+    "session_id": "s-042",
+    "consolidate_tools": ["dedupe", "link"]
+  }'
+```
+
+What each tool does:
+
+- **dedupe** — prefilters duplicate candidates (name similarity + overlapping
+  `related_entities` / `hard_cues`), asks an LLM to confirm at high confidence,
+  then merges the lower-strength file into the higher-strength one. The loser's
+  filename stem is preserved as an `alias` in the survivor's SEMANTIC INDEX so
+  the writer agent recognizes it on future sessions.
+- **redistribute** — scans for entities exceeding `soft_cap_tokens` (default
+  32 000, `len(content)//4` heuristic), then either (a) moves attributed
+  sections to their real subject's file (e.g. content about Andre living in
+  the user entity → `memories/people/andre.md`) or (b) extracts orphan themes
+  into new `memories/contexts/{slug}.md` files. Prefers smaller target entities
+  (balancing rule).
+- **link** — mines git log over the last `window` commits (default 3) for file
+  co-occurrence, then asks an LLM to weave Obsidian-style wikilinks
+  (`[[memories/people/andre|Andre]]`) inline in the prose. Idempotent: existing
+  wikilinks are not duplicated. Opens the memory folder for navigation as an
+  Obsidian vault.
+
+A per-user lockfile (`<worktree>/.diffmem/consolidator.lock`) prevents
+concurrent consolidator / writer runs.
+
 ## Repository layout
 
 Each user's memory is organized as:

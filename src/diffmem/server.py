@@ -103,6 +103,30 @@ class RunCommandRequest(BaseModel):
     command: str = Field(..., description="Sandboxed shell command to execute")
 
 
+class ConsolidateRequest(BaseModel):
+    tools: Optional[List[str]] = Field(
+        default=None,
+        description="Subset of ['dedupe','redistribute','link']. Order ignored; executed dedupe \u2192 redistribute \u2192 link. Default: all three.",
+    )
+    window: int = Field(default=3, description="Commit window for the link tool.")
+    soft_cap_tokens: int = Field(
+        default=32000,
+        description="Token cap above which an entity is considered oversized for redistribute.",
+    )
+
+
+class ProcessCommitAndConsolidateRequest(BaseModel):
+    memory_input: str = Field(..., description="Session transcript or memory content")
+    session_id: str = Field(..., description="Unique session identifier")
+    session_date: Optional[str] = Field(None, description="Session date (YYYY-MM-DD)")
+    consolidate_tools: Optional[List[str]] = Field(
+        default=None,
+        description="Subset of ['dedupe','redistribute','link']. Default: all three.",
+    )
+    window: int = Field(default=3, description="Commit window for the link tool.")
+    soft_cap_tokens: int = Field(default=32000, description="Soft cap for the redistribute tool.")
+
+
 def get_memory_instance(user_id: str, allow_unboarded: bool = False) -> DiffMemory:
     if user_id not in memory_instances:
         try:
@@ -465,6 +489,78 @@ async def process_and_commit_session(user_id: str, request: ProcessSessionReques
         logger.error(f"Session processing and commit error for {user_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail=f"Session processing and commit failed: {str(e)}")
+
+
+# --- Consolidation Endpoints ---
+
+@app.post("/memory/{user_id}/consolidate")
+async def consolidate(user_id: str, request: ConsolidateRequest, authenticated: bool = Depends(verify_api_key)):
+    """Run the consolidator over this user's worktree. Runs in the writer pool so
+    the uvicorn event loop stays free for health probes."""
+    memory = get_memory_instance(user_id)
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            _writer_pool,
+            lambda: memory.consolidate(
+                tools=request.tools,
+                window=request.window,
+                soft_cap_tokens=request.soft_cap_tokens,
+            ),
+        )
+        # Push consolidation commits to backup out-of-band.
+        _spawn_background(backup_user(user_id))
+        return {
+            "status": "success",
+            "consolidate": result,
+            "metadata": {"user_id": user_id, "timestamp": datetime.now().isoformat()},
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Consolidate error for {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Consolidation failed: {str(e)}",
+        )
+
+
+@app.post("/memory/{user_id}/process-commit-and-consolidate")
+async def process_commit_and_consolidate(
+    user_id: str,
+    request: ProcessCommitAndConsolidateRequest,
+    authenticated: bool = Depends(verify_api_key),
+):
+    """Process + commit a session, then consolidate. Single sequential thread-pool task."""
+    memory = get_memory_instance(user_id)
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            _writer_pool,
+            lambda: memory.process_commit_and_consolidate(
+                request.memory_input,
+                request.session_id,
+                request.session_date,
+                consolidate_tools=request.consolidate_tools,
+                window=request.window,
+                soft_cap_tokens=request.soft_cap_tokens,
+            ),
+        )
+        _spawn_background(backup_user(user_id))
+        return {
+            "status": "success",
+            "session_id": request.session_id,
+            "consolidate": result.get("consolidate"),
+            "metadata": {"user_id": user_id, "timestamp": datetime.now().isoformat()},
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Process-commit-and-consolidate error for {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Process-commit-and-consolidate failed: {str(e)}",
+        )
 
 
 # --- Utility Endpoints ---

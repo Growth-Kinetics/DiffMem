@@ -56,8 +56,20 @@ pyproject.toml           — Package metadata and dependencies
 - **Consolidation pipeline:** `consolidator_agent/agent.py` →
   `ConsolidatorAgent.run_dedupe()` / `run_redistribute()` / `run_link()`.
   Commits use the `consolidate(...)` prefix.
+- **Consolidate API:** `DiffMemory.consolidate(tools, window, soft_cap_tokens)`
+  and `DiffMemory.process_commit_and_consolidate(...)` in `api.py`.
+- **Consolidate HTTP:** `POST /memory/{user_id}/consolidate` and
+  `POST /memory/{user_id}/process-commit-and-consolidate` in `server.py`;
+  both routed through `_writer_pool`.
 
 ## Cross-Capability Flows
+
+5. **Consolidate (out-of-band):** `POST /memory/{id}/consolidate` →
+   `_writer_pool.run_in_executor` → `DiffMemory.consolidate()` →
+   acquire `.diffmem/consolidator.lock` per tool → dedupe → redistribute →
+   link → each tool produces `consolidate(...)`-prefixed commits →
+   fire-and-forget backup of the new commits.
+
 
 1. **Write turn:** `POST /memory/{id}/process-and-commit` → `_writer_pool.run_in_executor`
    → `WriterAgent.process_and_commit_session()` (blocks in thread) → git commit on
