@@ -128,28 +128,50 @@ def _cooccurrence_block(
 
 
 def _apply_edits(content: str, edits: List[Dict[str, str]]) -> Tuple[str, int]:
-    """Apply search-and-replace edits to content, skipping the SEMANTIC INDEX
-    tail. Returns (new_content, edits_applied_count)."""
-    si_start = content.find("## SEMANTIC INDEX")
-    if si_start == -1:
-        body, tail = content, ""
-    else:
-        body, tail = content[:si_start], content[si_start:]
+    """Apply search-and-replace edits to content. The `## SEMANTIC INDEX`
+    header line + the JSON line that follows it are off-limits; everything
+    else (including prose AFTER the SI block, e.g. trailing notes that
+    accumulated post-write) is editable.
+
+    Returns (new_content, edits_applied_count).
+    """
+    si_protected = _extract_si_protected_lines(content)
     applied = 0
+    new_content = content
     for e in edits:
         s = e.get("search_text", "")
         r = e.get("replacement_text", "")
         if not s or not r or s == r:
             continue
-        # Defensive: ensure the search_text doesn't overlap the SI tail.
         if "## SEMANTIC INDEX" in s:
-            logger.warning("LINK_EDIT_HITS_SI: skipping edit")
+            logger.warning("LINK_EDIT_HITS_SI: skipping edit (search_text overlaps SI header)")
             continue
-        new_body, did = replace_first(body, s, r)
+        # Defensive: do not propose to rewrite the SI JSON line itself.
+        if any(line in s for line in si_protected if line):
+            logger.warning("LINK_EDIT_HITS_SI_JSON: skipping edit")
+            continue
+        candidate, did = replace_first(new_content, s, r)
         if did:
-            body = new_body
+            new_content = candidate
             applied += 1
-    return body + tail, applied
+    return new_content, applied
+
+
+def _extract_si_protected_lines(content: str) -> List[str]:
+    """Returns the literal lines we must not allow any edit to overlap:
+    the `## SEMANTIC INDEX` header AND the JSON line immediately after it."""
+    out: List[str] = []
+    lines = content.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().startswith("## SEMANTIC INDEX"):
+            out.append(line)
+            # The JSON line is the next non-empty line.
+            for j in range(i + 1, len(lines)):
+                if lines[j].strip():
+                    out.append(lines[j])
+                    break
+            break
+    return out
 
 
 def run(
