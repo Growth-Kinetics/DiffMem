@@ -124,10 +124,44 @@ Files are Markdown (.md) for readability. Create manually or via DiffMem. Use ed
 
 ## Linking Between Files
 
-Use Markdown links for traversable graphs and spreading activation:  
-- **Format**: `[Label](relative/path/to/file.md#block-anchor; assoc=type)` (e.g., `[Stress Thematic](health.md#milestones; assoc=emotional_dynamics)`).  
-- **Purpose**: Enables traversal (taxonomic or thematic); DiffMem's BM25 follows for associative recall.  
-- **Guidelines**: Link sparingly. Use assoc= for types (e.g., taxonomic, thematic) to guide semantic control.
+DiffMem uses **Obsidian-style wikilinks** as the canonical link format.
+The consolidator agent (`run_link`) generates these automatically by mining
+commit co-occurrence; you generally do not need to author them by hand.
+
+- **Format**: `[[memories/people/andre|Andre]]` — full vault path (without
+  `.md` suffix) + pipe + display name.
+- **Examples**:
+  - `[[memories/people/lars_orloff|Lars Orloff]]`
+  - `[[memories/contexts/data_governance|Data Governance]]`
+  - `[[memories/people/alex|Alex]]`
+- **Purpose**: Renders as a clickable link in Obsidian (open the worktree as
+  a vault) AND is greppable with `\[\[` for agents. Enables graph-style
+  traversal across the memory folder.
+- **Guidelines**: One wikilink per target entity per file. Place inline in
+  prose where the entity is naturally mentioned. The `## SEMANTIC INDEX`
+  section is off-limits to link insertion.
+- **Legacy format** (pre-consolidator): `[Label](relative/path/to/file.md#anchor; assoc=type)`.
+  Existing legacy links continue to work but new links should use the
+  wikilink syntax above.
+
+## Consolidation
+
+The consolidator agent runs out-of-band (separate from the writer's session
+hot path) and produces commits whose messages always start with
+`consolidate(...)`. Three tools:
+
+- `consolidate(dedupe): {survivor} ← {loser}` — two entity files were merged.
+  The loser's filename stem is preserved as an `alias` in the survivor's
+  SEMANTIC INDEX so future writer-agent runs recognise it.
+- `consolidate(redistribute): slim {entity} (N moves, M new contexts)` — an
+  oversized entity had sections moved to subject entities or extracted as new
+  `memories/contexts/{slug}.md` files.
+- `consolidate(link): wikilinks across N files (window=K)` — Obsidian-style
+  wikilinks were woven into prose based on co-occurrence in the last K commits.
+
+Retrieval-aware agents can filter consolidation commits from session-formation
+commits with `git log --grep='^consolidate'` (or the inverse).
+The writer agent never produces commits with this prefix.
 
 ## History Creation and Session Referencing
 

@@ -36,6 +36,9 @@ in the git commit graph. No vector DB, no embeddings.
 - `retrieval_agent/agent.py` — Multi-turn agent with sandboxed shell tool. Explores repo and
   returns a structured retrieval plan.
 - `storage/factory.py` — Pluggable storage/backup backend factory.
+- `consolidator_agent/agent.py` — `ConsolidatorAgent`: out-of-band repair pass
+  with three tools (`run_dedupe`, `run_redistribute`, `run_link`). Produces
+  `consolidate(...)`-prefixed commits.
 
 ## External Dependencies
 - **OpenRouter** — all LLM calls (writer, onboarding, retrieval agents). Model configured
@@ -43,9 +46,13 @@ in the git commit graph. No vector DB, no embeddings.
 - **GitHub** (optional) — backup backend when `BACKUP_BACKEND=github`.
 
 ## Constraints
-- **All three blocking operations run in `_writer_pool`:** writes (process/commit), reads
-  (`/context`), and remote pulls at mount time. Keeps the uvicorn event loop free for health
-  probes at all times.
+- **All blocking operations run in `_writer_pool`:** writes (process/commit), reads
+  (`/context`), remote pulls at mount time, AND consolidation runs. Keeps the
+  uvicorn event loop free for health probes at all times.
+- **Consolidator commits use the `consolidate:` prefix** — specifically
+  `consolidate(dedupe):`, `consolidate(redistribute):`, and
+  `consolidate(link):`. This lets retrieval agents and human auditors
+  distinguish them from session-formation commits. See ADR-D006.
 - **Pull happens at mount time only** (first request per user per process lifetime, i.e. after
   a service restart). If the service stays up for days and you push memory edits from another
   machine, DiffMem won't see them until the next restart. Pull is fast-forward only — diverged
@@ -62,3 +69,6 @@ in the git commit graph. No vector DB, no embeddings.
   → `pull_user()`, `storage/local_storage.py` → `get_user_worktree()` pull call site.
 - For auth / CORS / startup: `server.py` lifespan + `verify_api_key`.
 - For backup push failures: `storage/github_backup.py` → `sync_user()`.
+- For consolidation (dedupe / redistribute / link):
+  `consolidator_agent/agent.py` → `ConsolidatorAgent` + see
+  `consolidator_agent/CONTEXT.md`.
