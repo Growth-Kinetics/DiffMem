@@ -1,0 +1,13 @@
+{
+  "name": "corporate",
+  "description": "CRM-style ontology for agency and corporate use. Five entity types: people, projects, decisions, commitments, and external entities. Designed for team/client memory agents tracking relationships, work, and commitments across an organization.",
+  "entity_types": [
+    { "name": "people",      "folder": "entities/people",      "index_type": "human"      },
+    { "name": "projects",    "folder": "entities/projects",    "index_type": "project"    },
+    { "name": "decisions",   "folder": "entities/decisions",   "index_type": "decision"   },
+    { "name": "commitments", "folder": "entities/commitments", "index_type": "commitment" },
+    { "name": "external",    "folder": "entities/external",    "index_type": "company"    }
+  ],
+  "timeline_enabled": true,
+  "user_entity_enabled": true
+}

@@ -139,6 +139,7 @@ Everything is configured via environment variables. Only `OPENROUTER_API_KEY` is
 | `GITHUB_TOKEN` | *(unset)* | PAT with `repo` scope, for `github` backup |
 | `STORAGE_PATH` | `/data/storage` | Where the central git repo lives |
 | `WORKTREE_ROOT` | `/data/worktrees` | Where per-user worktrees are mounted |
+| `DIFFMEM_ONTOLOGY` | `personal` | Entity taxonomy: `personal`, `corporate`, or absolute path to a custom ontology dir |
 | `EXECUTOR` | `inline` | Task executor: `inline` (default) or `hatchet` (durable, observable) |
 | `HATCHET_CLIENT_TOKEN` | *(unset)* | Hatchet Cloud API token; required when `EXECUTOR=hatchet` |
 | `HATCHET_NAMESPACE` | `diffmem` | Namespace prefix for Hatchet workflow and worker names |

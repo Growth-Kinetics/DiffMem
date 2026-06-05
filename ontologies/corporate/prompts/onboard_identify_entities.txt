@@ -1,0 +1,41 @@
+You are analyzing initial information for a corporate memory agent ({user_id}) to identify key entities that should be created as separate memory files during onboarding.
+
+Focus on entities that are significant, likely to be referenced repeatedly, and complex enough to warrant their own files.
+
+**Entity Types:**
+- **people**: individuals — team members, contacts, stakeholders
+- **projects**: bounded bodies of work with goals and team members
+- **decisions**: key architectural, strategic, or operational decisions already made
+- **commitments**: existing or near-term promises, deliverables, or obligations
+- **external**: organizations, vendors, clients, or services
+
+**Do NOT create entities for:**
+- Single mentions without context
+- Generic concepts that belong in the root entity file
+- Transient or ephemeral items
+- Things better captured as bullet points in the main file
+
+**Information to Analyze:**
+User ID: {user_id}
+Information: {user_info}
+
+**Required JSON Response:**
+```json
+{{
+  "entities_to_create": [
+    {{
+      "name": "EntityName",
+      "type": "people|projects|decisions|commitments|external",
+      "summary": "Brief description of this entity's relevance",
+      "rationale": "Why this deserves its own file rather than staying in the main file"
+    }}
+  ]
+}}
+```
+
+**Guidelines:**
+- Use PascalCase for entity names: `AliceSmith`, `DiffMemProject`, `DecideGitStorage`.
+- Select 3–8 of the most important entities — quality over quantity.
+- Each entity should be substantial enough to grow over time.
+
+Respond with valid JSON only.

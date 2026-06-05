@@ -10,6 +10,7 @@ from .retrieval_agent.baseline import load_baseline, load_always_load_for_entiti
 from .retrieval_agent.agent import run_retrieval_agent, LLMConfig
 from .retrieval_agent.resolver import resolve_pointers
 from .consolidator_agent.agent import ConsolidatorAgent
+from .ontology.loader import OntologyProfile, load_ontology
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,7 +37,8 @@ class DiffMemory:
 
     def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str,
                  model: Optional[str] = None, auto_onboard: bool = False,
-                 max_concurrent_llm_calls: int = 8):
+                 max_concurrent_llm_calls: int = 8,
+                 ontology: Optional[OntologyProfile] = None):
         self.repo_path = Path(repo_path)
         self.user_id = user_id
         self.openrouter_api_key = openrouter_api_key
@@ -44,6 +46,8 @@ class DiffMemory:
         if not self.model:
             raise ValueError("Default model must be provided or set in DEFAULT_MODEL env var")
         self.max_concurrent_llm_calls = max_concurrent_llm_calls
+        # Load ontology once; propagated to writer and onboarding agents
+        self.ontology: OntologyProfile = ontology if ontology is not None else load_ontology()
 
         self.user_path = self.repo_path
         if not self.user_path.exists():
@@ -64,7 +68,8 @@ class DiffMemory:
                 self.user_id,
                 self.openrouter_api_key,
                 self.model,
-                self.max_concurrent_llm_calls
+                self.max_concurrent_llm_calls,
+                ontology=self.ontology,
             )
         return self._writer_agent
 
@@ -91,7 +96,8 @@ class DiffMemory:
             str(self.repo_path),
             self.user_id,
             self.openrouter_api_key,
-            self.model
+            self.model,
+            ontology=self.ontology,
         )
 
         result = onboarding_agent.onboard_user(user_info, session_id, template=template)
@@ -170,6 +176,7 @@ class DiffMemory:
                 baseline_tokens=baseline_tokens,
                 max_turns=max_turns,
                 timeout_seconds=timeout_seconds,
+                ontology=self.ontology,
             )
 
             agent_blocks = resolve_pointers(

@@ -10,35 +10,41 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 from .agent import WriterAgent
+from diffmem.ontology.loader import OntologyProfile
 
 class OnboardingAgent(WriterAgent):
     """Handles initial user setup and directory structure creation."""
     
-    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: Optional[str] = None):
+    def __init__(self, repo_path: str, user_id: str, openrouter_api_key: str, model: Optional[str] = None, ontology: Optional[OntologyProfile] = None):
         super().__init__(
             repo_path=repo_path, 
             user_id=user_id, 
             openrouter_api_key=openrouter_api_key, 
             model=model,
-            validate_paths=False
+            validate_paths=False,
+            ontology=ontology,
         )
         self.timeline_path = self.user_path / "timeline"
     
     def _create_directory_structure(self):
-        """Creates the basic directory structure for a new user."""
-        self.logger.info(f"Creating directory structure for user: {self.user_id}")
+        """Creates the directory structure for a new user, driven by the active ontology."""
+        self.logger.info(f"Creating directory structure for user: {self.user_id} (ontology: {self.ontology.name})")
         
-        self.memories_path.mkdir(parents=True, exist_ok=True)
         self.timeline_path.mkdir(parents=True, exist_ok=True)
         
-        # Create memory subdirectories
-        (self.memories_path / "people").mkdir(exist_ok=True)
-        (self.memories_path / "contexts").mkdir(exist_ok=True)
+        # Create entity folders from ontology schema (not hardcoded)
+        for entity_type in self.ontology.entity_types:
+            folder_path = self.repo_path / entity_type["folder"]
+            folder_path.mkdir(parents=True, exist_ok=True)
+        
+        # Copy ontology-specific repo_guide.md into the worktree
+        import shutil
+        shutil.copy2(self.ontology.repo_guide_path, self.user_path / "repo_guide.md")
+        self.logger.info(f"REPO_GUIDE_COPIED: {self.ontology.repo_guide_path.name} → worktree")
         
         self.logger.info(f"Directory structure created at: {self.user_path}")
         
-        # Initialize git repo object if not already done
-        # Assuming the path is already a git worktree or repo
+        # Initialize git repo object
         self.repo = git.Repo(self.user_path)
 
     def _create_initial_user_file(self, user_info: str, template: str = None) -> str:

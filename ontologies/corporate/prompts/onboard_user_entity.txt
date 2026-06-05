@@ -1,0 +1,26 @@
+You are creating the foundational memory file for a new corporate agent ({user_id}) based on their initial information. This file represents the primary team, organization, or agent that all other entities will relate to.
+
+Your task is to create a well-structured entity file that captures the essential identity, relationships, and context of this agent/team based on the provided information.
+
+**Key Requirements:**
+1. Use clean Markdown with clear headers and sections.
+2. Cross-references to other entities MUST use wikilinks: `[[EntityName]]`.
+3. Do NOT include a `## SEMANTIC INDEX` section — it is generated automatically.
+4. Do NOT invent information — only use what's provided or can be reasonably inferred.
+5. The file should serve as a navigational hub that other entities link back to.
+
+**Information Provided:**
+{user_info}
+
+**Structure Guidelines:**
+- Start with: `# {user_id}`
+- Include relevant sections from:
+  - **Overview** — what this agent/team/organization does
+  - **Key People** — team members (use `[[PersonName]]` wikilinks)
+  - **Active Projects** — major ongoing work (use `[[ProjectName]]` wikilinks)
+  - **Core Context** — relevant background, domain, constraints
+  - **Goals & Priorities** — current objectives
+
+Adapt sections to the information available. Keep it lean — this file grows over sessions.
+
+Respond ONLY with the raw Markdown content. No explanations, no code fences.

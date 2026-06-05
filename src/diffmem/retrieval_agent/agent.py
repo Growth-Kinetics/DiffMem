@@ -16,6 +16,7 @@ from typing import List, Dict, Any, Optional
 from openai import OpenAI
 
 from .command_router import run as execute_command
+from diffmem.ontology.loader import OntologyProfile, load_ontology
 
 logger = logging.getLogger(__name__)
 
@@ -105,14 +106,28 @@ TOOLS = [{
 }]
 
 
-def _build_system_prompt(user_id: str, max_tokens: int,
-                          baseline_tokens: int) -> str:
-    template = (PROMPTS_DIR / "system.txt").read_text(encoding="utf-8")
+def _build_folder_listing(ontology: OntologyProfile) -> str:
+    """Render the per-ontology folder listing for the retrieval system prompt."""
+    lines = []
+    for et in ontology.entity_types:
+        folder = et["folder"]
+        name = et["name"]
+        lines.append(f"  {folder}/  -- {name.capitalize()} entity files")
+    return "\n".join(lines)
 
+
+def _build_system_prompt(user_id: str, max_tokens: int,
+                          baseline_tokens: int,
+                          ontology: Optional[OntologyProfile] = None) -> str:
+    template = (PROMPTS_DIR / "system.txt").read_text(encoding="utf-8")
+    if ontology is None:
+        ontology = load_ontology()
+    folder_listing = _build_folder_listing(ontology)
     return template.format(
         user_id=user_id,
         baseline_tokens=baseline_tokens,
         remaining_budget=max_tokens,
+        folder_listing=folder_listing,
     )
 
 
@@ -188,6 +203,7 @@ def run_retrieval_agent(
     max_turns: int = 4,
     timeout_seconds: int = 30,
     llm_config: Optional[LLMConfig] = None,
+    ontology: Optional[OntologyProfile] = None,
 ) -> RetrievalPlan:
     """
     Run the multi-turn retrieval agent against a user's worktree.
@@ -202,7 +218,7 @@ def run_retrieval_agent(
         api_key=llm_config.api_key,
     )
 
-    system_prompt = _build_system_prompt(user_id, max_tokens, baseline_tokens)
+    system_prompt = _build_system_prompt(user_id, max_tokens, baseline_tokens, ontology=ontology)
     user_message = _build_user_message(conversation)
 
     messages = [
