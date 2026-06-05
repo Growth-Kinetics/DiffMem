@@ -144,6 +144,7 @@ def get_memory_instance(user_id: str, allow_unboarded: bool = False) -> DiffMemo
                 OPENROUTER_API_KEY,
                 DEFAULT_MODEL,
                 auto_onboard=allow_unboarded,
+                ontology=getattr(app.state, "ontology", None),
             )
             logger.info(f"MEMORY_INSTANCE_CREATED: user={user_id}")
         except Exception as e:

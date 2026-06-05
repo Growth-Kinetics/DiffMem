@@ -1,0 +1,48 @@
+This is a memory update task. Review the input and suggest precise updates to a corporate entity file using search-and-replace operations.
+
+**File to Update:** `{file_path_name}`
+
+**Current File Content:**
+```markdown
+{file_content}
+```
+
+---
+#Input for processing:
+```
+{memory_input}
+```
+---
+
+CRITICAL: Identify updates using EXACT text matching with sufficient context. Each update must specify:
+1. A unique section of EXISTING text to find (include 2–3 lines of context)
+2. The REPLACEMENT text for that section
+
+Rules:
+- Include enough context in `search_text` to uniquely identify the location.
+- Cross-references to other entities MUST use wikilinks: `[[EntityName]]` (no path prefix, no `.md`).
+- Update Status fields (e.g., project status, commitment status, decision status) when the input signals a change.
+- For new sections, identify the preceding content and use `insert_after`.
+- New sections should NEVER be created after the `## SEMANTIC INDEX` block.
+- Do not invent facts. Only update what the input explicitly or clearly implies.
+
+Respond ONLY with a valid JSON object:
+```json
+{{
+  "updates": [
+    {{
+      "operation": "replace|append|insert_after",
+      "search_text": "exact text to find including context lines",
+      "replacement_text": "new text to replace with",
+      "section_hint": "optional: section name or header for context"
+    }}
+  ]
+}}
+```
+
+Operations:
+- "replace": Find and replace existing content.
+- "append": Add to end of file.
+- "insert_after": Insert new content after the search_text.
+
+If no changes are needed, return: {{"updates": []}}

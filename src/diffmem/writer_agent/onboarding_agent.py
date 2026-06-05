@@ -119,11 +119,11 @@ class OnboardingAgent(WriterAgent):
         """Builds semantic indexes for all created files in parallel."""
         self.logger.info("Building initial semantic indexes...")
         
-        # Get all markdown files in memories
+        # Collect entity files from all ontology dirs + the root user file
         md_files = []
         if self.user_file.exists():
             md_files.append(self.user_file)
-        md_files.extend(list(self.memories_path.rglob('*.md')))
+        md_files.extend(list(self._entity_md_files()))
         
         # Delegate to parent's parallelized method (DRY)
         self._build_entity_indexes(md_files)

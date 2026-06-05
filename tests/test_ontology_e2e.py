@@ -233,3 +233,109 @@ def test_corporate_folder_listing_uses_entities_prefix():
 def test_ontology_module_importable():
     from diffmem.ontology import OntologyProfile, load_ontology  # noqa: F401
     assert True
+
+# ---------------------------------------------------------------------------
+# Bug-fix regression tests (review fixes)
+# ---------------------------------------------------------------------------
+
+def test_entity_dirs_personal():
+    """Bug 2/5: entity_dirs() must return the correct paths for personal ontology."""
+    from pathlib import Path
+    p = load_ontology("personal")
+    root = Path("/tmp/fake_repo")
+    dirs = p.entity_dirs(root)
+    paths = [str(d) for d in dirs]
+    assert any("memories/people" in s for s in paths)
+    assert any("memories/contexts" in s for s in paths)
+
+
+def test_entity_dirs_corporate():
+    """Bug 2/5: entity_dirs() must return entities/ prefix for corporate, not memories/."""
+    from pathlib import Path
+    p = load_ontology("corporate")
+    root = Path("/tmp/fake_repo")
+    dirs = p.entity_dirs(root)
+    paths = [str(d) for d in dirs]
+    assert any("entities/people" in s for s in paths)
+    assert any("entities/decisions" in s for s in paths)
+    assert not any("memories/" in s for s in paths), \
+        "corporate entity_dirs must NOT contain 'memories/' prefix"
+
+
+def test_default_folder_personal():
+    """Issue 4: default_folder() must not hardcode 'memories/' for unknown types."""
+    from pathlib import Path
+    p = load_ontology("personal")
+    root = Path("/tmp/fake_repo")
+    d = p.default_folder(root)
+    assert "memories/people" in str(d)
+
+
+def test_default_folder_corporate():
+    """Issue 4: corporate default_folder() returns first entity type folder (entities/people)."""
+    from pathlib import Path
+    p = load_ontology("corporate")
+    root = Path("/tmp/fake_repo")
+    d = p.default_folder(root)
+    assert "entities/people" in str(d)
+    assert "memories/" not in str(d)
+
+
+def test_ontologies_dir_inside_package():
+    """Bug 3: _ONTOLOGIES_DIR must resolve inside the package tree (src/diffmem/ontologies/),
+    not at a repo-root or site-packages-adjacent path that breaks on pip install."""
+    from diffmem.ontology.loader import _ONTOLOGIES_DIR
+    assert "diffmem" in str(_ONTOLOGIES_DIR), \
+        f"Expected _ONTOLOGIES_DIR to be inside the diffmem package, got: {_ONTOLOGIES_DIR}"
+    assert _ONTOLOGIES_DIR.exists(), f"_ONTOLOGIES_DIR does not exist: {_ONTOLOGIES_DIR}"
+
+
+def test_writer_agent_uses_ontology_entity_dirs(tmp_path):
+    """Bug 2: WriterAgent._entity_md_files() scans ontology entity dirs, not hardcoded memories/."""
+    import json
+    from diffmem.ontology.loader import load_ontology
+    from diffmem.writer_agent.agent import WriterAgent
+
+    p = load_ontology("corporate")
+    # Create minimal worktree structure
+    (tmp_path / "agent.md").write_text("# agent\n\n## SEMANTIC INDEX\n{}")
+    (tmp_path / "index.md").write_text("")
+    entities_dir = tmp_path / "entities" / "people"
+    entities_dir.mkdir(parents=True)
+    (entities_dir / "AliceSmith.md").write_text("# Person: Alice Smith")
+
+    agent = WriterAgent(
+        str(tmp_path), "agent", "fake-key", model="fake-model",
+        validate_paths=False, ontology=p,
+    )
+    found = list(agent._entity_md_files())
+    names = [f.name for f in found]
+    assert "AliceSmith.md" in names, \
+        f"_entity_md_files() should find AliceSmith.md in entities/people, got: {names}"
+
+
+def test_writer_agent_entity_md_files_does_not_include_memories_for_corporate(tmp_path):
+    """Bug 2: corporate _entity_md_files() must NOT scan memories/ — it doesn't exist."""
+    from diffmem.ontology.loader import load_ontology
+    from diffmem.writer_agent.agent import WriterAgent
+
+    p = load_ontology("corporate")
+    (tmp_path / "agent.md").write_text("# agent")
+    (tmp_path / "index.md").write_text("")
+    # Create a stray file in memories/ to confirm it is ignored
+    memories_dir = tmp_path / "memories" / "people"
+    memories_dir.mkdir(parents=True)
+    (memories_dir / "stray.md").write_text("# stray")
+    # Create a proper corporate entity
+    entities_dir = tmp_path / "entities" / "projects"
+    entities_dir.mkdir(parents=True)
+    (entities_dir / "DiffMem.md").write_text("# Project: DiffMem")
+
+    agent = WriterAgent(
+        str(tmp_path), "agent", "fake-key", model="fake-model",
+        validate_paths=False, ontology=p,
+    )
+    found = [f.name for f in agent._entity_md_files()]
+    assert "DiffMem.md" in found
+    assert "stray.md" not in found, \
+        "corporate _entity_md_files() must not pick up files from memories/"

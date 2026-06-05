@@ -9,7 +9,7 @@ import git
 import json
 import logging
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
@@ -27,7 +27,9 @@ class WriterAgent:
         self.user_file = self.user_path / f"{user_id}.md"  # Core user file at root of user folder
         # Ontology drives folder structure, entity vocabulary, and prompt resolution
         self.ontology: OntologyProfile = ontology if ontology is not None else load_ontology()
-        self.memories_path = self.user_path / "memories"
+        # NOTE: do NOT use self.memories_path for scanning — it only covers the personal
+        # ontology. Use self._entity_md_files() to iterate all entity files correctly.
+        self.memories_path = self.user_path / "memories"  # kept for personal-ontology backwards compat
         self.prompts_path = Path(__file__).parent / "prompts"  # fallback; use self.ontology.resolve_prompt()
         self.max_concurrent_llm_calls = max_concurrent_llm_calls  # Configurable concurrency limit
         if not model:
@@ -56,6 +58,17 @@ class WriterAgent:
         prompt_file = self.ontology.resolve_prompt(prompt_name)
         with open(prompt_file, 'r', encoding='utf-8') as f:
             return f.read()
+
+    def _entity_md_files(self):
+        """Yield all .md files across every ontology entity dir, skipping sessions/.
+        Replaces hardcoded self.memories_path.rglob('*.md') so corporate and future
+        ontologies with different folder roots are covered correctly."""
+        for entity_dir in self.ontology.entity_dirs(self.repo_path):
+            if not entity_dir.exists():
+                continue
+            for md_file in entity_dir.rglob('*.md'):
+                if '/sessions/' not in md_file.as_posix():
+                    yield md_file
 
     def _get_relative_entity_path(self, file_path: Path) -> str:
         """
@@ -141,10 +154,10 @@ class WriterAgent:
 
             new_file_content = self._call_llm(system_prompt, creation_prompt, is_json=False)
 
-            # Resolve folder from ontology schema — falls back to memories/{type} if type unknown
+            # Resolve folder from ontology schema - falls back to memories/{type} if type unknown
             folder_map = self.ontology.folder_map
             entity_type = entity['type']
-            rel_folder = folder_map.get(entity_type, f"memories/{entity_type}")
+            rel_folder = folder_map.get(entity_type) or self.ontology.default_folder(self.repo_path).relative_to(self.repo_path).as_posix()
             target_dir = self.repo_path / rel_folder
             target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -444,7 +457,7 @@ class WriterAgent:
             folder_map.get(entity_type.lower())
             or folder_map.get(entity_type.lower().rstrip('s'))  # strip trailing 's'
             or folder_map.get(entity_type.lower() + 's')         # add 's'
-            or f"memories/{entity_type.lower()}"
+            or self.ontology.default_folder(self.repo_path).relative_to(self.repo_path).as_posix()
         )
         search_dir = self.repo_path / rel_folder
 
@@ -453,10 +466,8 @@ class WriterAgent:
             self.logger.debug(f"ENTITY_RESOLVED_COMPUTED: {entity_name} → {entity_file}")
             return entity_file
 
-        # Strategy 3: Fuzzy search across all memories
-        for md_file in self.memories_path.rglob('*.md'):
-            if '/sessions/' in str(md_file).replace('\\', '/'):
-                continue
+        # Strategy 3: Fuzzy search across all ontology entity dirs
+        for md_file in self._entity_md_files():
             if md_file.stem.lower() == entity_name.lower().replace(' ', '_').replace('.', ''):
                 self.logger.debug(f"ENTITY_RESOLVED_FUZZY: {entity_name} → {md_file}")
                 return md_file
@@ -599,9 +610,9 @@ class WriterAgent:
                 if len(parts) >= 4:
                     file_path = parts[3][2:]  # Remove 'b/' prefix
                     full_path = self.repo_path / file_path
-                    # Only include .md files in memories directory
+                    # Only include .md files in entity dirs (ontology-aware)
                     if (full_path.suffix == '.md' and
-                        full_path.is_relative_to(self.memories_path) and
+                        any(full_path.is_relative_to(d) for d in self.ontology.entity_dirs(self.repo_path)) and
                         full_path.exists()):
                         modified_files.append(full_path)
 
@@ -800,9 +811,9 @@ class WriterAgent:
 
         index_entries = []
 
-        # Scan all markdown files in memories directory
-        for md_file in self.memories_path.rglob('*.md'):
-            if md_file.name == 'index.md' or '/sessions/' in str(md_file).replace('\\', '/'):  # Skip index and sessions
+        # Scan all entity dirs defined by the active ontology
+        for md_file in self._entity_md_files():
+            if md_file.name == 'index.md':
                 continue
 
             try:

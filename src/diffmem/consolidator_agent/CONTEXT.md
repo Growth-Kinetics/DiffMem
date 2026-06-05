@@ -63,3 +63,10 @@ if generated first; redistribution alters co-occurrence signal).
 - **No coupling to writer-agent internals.** Where helpers are needed
   (e.g. fuzzy text matching, index rebuilding), prefer extracting to a shared
   module rather than reaching into `writer_agent.agent.WriterAgent` directly.
+- **Consolidator prompts are not ontology-scoped (by design).** The three repair
+  tools (dedupe, redistribute, link) operate on the semantic structure of files
+  regardless of ontology. Their prompts live in `consolidator_agent/prompts/`
+  and are not resolved via `OntologyProfile.resolve_prompt()`. If a future
+  ontology requires custom consolidation behavior, add a `consolidator_prompts/`
+  key to `schema.json` and extend the loader. Do not silently inherit from the
+  personal ontology without documenting the decision.

@@ -14,18 +14,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Locate the built-in ontologies/ directory.
-# Works in two layouts:
-#   dev/repo:     src/diffmem/ontology/loader.py  → 4x parent = repo root, ontologies/ lives there
-#   installed wheel: Poetry includes ontologies/ alongside the package; it lands at
-#                    <site-packages>/ontologies/ which is 2x parent from this file.
-# We try the repo-root layout first, then fall back to the package-adjacent layout.
-_LOADER_FILE = Path(__file__)                      # src/diffmem/ontology/loader.py
-_REPO_ROOT = _LOADER_FILE.parent.parent.parent.parent  # DiffMem/ (repo root, dev)
-
-_ONTOLOGIES_DIR = (
-    _REPO_ROOT / "ontologies" if (_REPO_ROOT / "ontologies").is_dir()
-    else _LOADER_FILE.parent.parent.parent / "ontologies"  # installed: site-packages/ontologies/
-)
+# ontologies/ lives at src/diffmem/ontologies/ (co-located with the package).
+# This ensures it is always reachable via a relative path from this file,
+# whether running from the repo, installed via pip, or installed with --prefix.
+# Path: src/diffmem/ontology/loader.py  → parent = src/diffmem/ontology/
+#        parent.parent = src/diffmem/  →  / "ontologies" = src/diffmem/ontologies/
+_ONTOLOGIES_DIR = Path(__file__).parent.parent / "ontologies"
 
 # Fallback prompts directory (writer_agent default prompts)
 _DEFAULT_PROMPTS_DIR = Path(__file__).parent.parent / "writer_agent" / "prompts"
@@ -51,6 +45,16 @@ class OntologyProfile:
     def folder_map(self) -> Dict[str, str]:
         """Maps entity type name → folder path string (relative to worktree root)."""
         return {et["name"]: et["folder"] for et in self.entity_types}
+
+    def entity_dirs(self, repo_root: Path) -> List[Path]:
+        """Absolute paths to every entity folder for this ontology under repo_root.
+        Use this instead of a hardcoded 'memories/' prefix for scanning."""
+        return [repo_root / et["folder"] for et in self.entity_types]
+
+    def default_folder(self, repo_root: Path) -> Path:
+        """Fallback entity folder when an entity type is unknown.
+        Returns the first entity type's folder (safer than a hardcoded 'memories/')."""
+        return repo_root / self.entity_types[0]["folder"]
 
     @property
     def index_type_vocab(self) -> List[str]:
