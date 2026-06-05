@@ -354,7 +354,7 @@ def run(
         )
 
     if commits:
-        rebuild_master_index(worktree, user_id, repo=repo)
+        rebuild_master_index(worktree, user_id, repo=repo, entity_dirs=entity_dirs)
         if repo.is_dirty(untracked_files=True):
             repo.git.add("index.md")
             repo.index.commit("consolidate(redistribute): rebuild master index.md")

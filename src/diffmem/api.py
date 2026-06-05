@@ -472,11 +472,13 @@ def onboard_new_user(repo_path: str, user_id: str, user_info: str,
                     openrouter_api_key: str = None,
                     model: Optional[str] = None,
                     session_id: str = None,
-                    template: str = None) -> Dict[str, Any]:
+                    template: str = None,
+                    ontology: Optional[OntologyProfile] = None) -> Dict[str, Any]:
     """Onboard a completely new user to the memory system."""
     if openrouter_api_key is None:
         openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
         if not openrouter_api_key:
             raise ValueError("OpenRouter API key must be provided or set in OPENROUTER_API_KEY env var")
-    memory = DiffMemory(repo_path, user_id, openrouter_api_key, model, auto_onboard=True)
+    memory = DiffMemory(repo_path, user_id, openrouter_api_key, model, auto_onboard=True,
+                        ontology=ontology)
     return memory.onboard_user(user_info, session_id, template=template)

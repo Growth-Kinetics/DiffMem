@@ -348,6 +348,7 @@ async def onboard_user(user_id: str, request: OnboardUserRequest, authenticated:
             user_repo_path, user_id, request.user_info,
             OPENROUTER_API_KEY, DEFAULT_MODEL, request.session_id,
             template=request.template,
+            ontology=getattr(app.state, "ontology", None),
         )
         if user_id in memory_instances:
             del memory_instances[user_id]

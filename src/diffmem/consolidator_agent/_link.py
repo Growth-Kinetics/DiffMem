@@ -182,8 +182,10 @@ def run(
     llm_call: Callable[[str, bool], Any],
     user_id: str,
     window: int = 3,
-    entity_dirs: List[Path] = None,
 ) -> Dict[str, Any]:
+    # NOTE: entity_dirs is not needed here — the link tool builds co-occurrence
+    # from git log paths (already worktree-relative) and loads files by path,
+    # not by scanning a folder tree. It works correctly for any ontology layout.
     commits = _commits_in_window(repo, window)
     cooccurrence = _build_cooccurrence(commits)
 

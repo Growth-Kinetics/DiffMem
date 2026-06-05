@@ -146,5 +146,4 @@ class ConsolidatorAgent:
                 llm_call=self._call_llm,
                 user_id=self.user_id,
                 window=window,
-                entity_dirs=self.ontology.entity_dirs(self.repo_path),
             )
