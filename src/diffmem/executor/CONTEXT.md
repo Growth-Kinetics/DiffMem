@@ -2,42 +2,66 @@
 
 ## BUSINESS PURPOSE
 Pluggable task-execution abstraction that decouples *what* gets run (writer-agent
-thunk, consolidator thunk) from *how* it is scheduled. The default backend
-(`inline`) reuses the existing `_writer_pool` with zero extra infrastructure,
-giving self-hosters the same behaviour as before M1. A future Hatchet backend
-(M3) will add durable queues, retries, and observability for multi-user
-production deployments.
+or consolidator work) from *how* it is scheduled. Two backends ship today:
+
+- **`inline`** (default): reuses the existing `_writer_pool` with per-user
+  `threading.Lock` serialization. Zero external infrastructure. Identical UX
+  to the pre-executor DiffMem for single-user / local-host use.
+- **`hatchet`**: enqueues runs into a Hatchet engine (Cloud or self-hosted
+  Hatchet Lite). Workers consume runs in a separate process. Per-user
+  serialization via `ConcurrencyExpression(expression="input.user_id")`.
+  Durable runs, retries, dashboard, cron, observability. Opt-in via
+  `EXECUTOR=hatchet` env var.
 
 ## USER STORIES
 - As a **self-hoster**, I run DiffMem with no environment changes and get
   inline execution backed by `ThreadPoolExecutor(max_workers=4)` — identical
-  to pre-M1 behaviour.
+  to pre-executor behaviour.
 - As a **production operator** running many users, I set `EXECUTOR=hatchet`
   to route all jobs through Hatchet for durability, retry, and
-  dead-letter-queue observability (available M3+).
+  observability.
 - As a **developer** adding a new backend, I implement `TaskExecutor`, add an
   elif branch to `factory.py`, and the rest of the system picks it up.
 
 ## INFORMATION FLOW
-```
-HTTP endpoint
-  → executor.submit_write(user_id, thunk, callback_url?)
-      → returns JobHandle(job_id, status="queued", submitted_at)
-  → endpoint either:
-      a) calls executor.wait_for(job_id) → blocks until terminal → returns result (sync mode, M2)
-      b) returns job_id immediately for async polling via GET /jobs/{job_id} (M2)
 
-InlineExecutor internals:
-  ThreadPoolExecutor
-    → _run_job(job_id, user_id, thunk, callback_url)
-        → acquire per-user lock         # serialises same-user writes
-        → update_status("running")
-        → thunk()                       # blocking LLM + git work
-        → set_result / set_error
-        → update_status("completed" | "failed")
-        → release per-user lock
-        → _fire_callback(callback_url)  # best-effort POST
+### Inline mode (default)
 ```
+HTTP endpoint (API process)
+  → executor.submit_write(user_id, thunk, payload, callback_url?)
+      → InlineExecutor pushes a wrapper into _writer_pool
+      → returns JobHandle(job_id, status="queued", submitted_at)
+  → wrapper inside the ThreadPoolExecutor:
+      → acquire per-user threading.Lock   # serialises same-user writes
+      → update_status("running")
+      → thunk()                            # blocking LLM + git work
+      → set_result / set_error
+      → update_status("completed" | "failed")
+      → release per-user lock
+      → _fire_callback(callback_url)        # best-effort POST
+  → endpoint either waits (sync=True default) or returns job_id (sync=False).
+```
+
+### Hatchet mode (`EXECUTOR=hatchet`)
+```
+API process                              Hatchet engine          Worker process (diffmem-worker)
+────────────────────────────────────   ───────────────   ───────────────────────────────
+HatchetExecutor.submit_write(...)         (Postgres,
+  → write_workflow.run(WriteInput,         queue, runs)
+        wait_for_result=False)     ──gRPC─→
+  ←── WorkflowRunRef(run_id) ──────────────
+  → JobHandle(run_id, queued)
+
+endpoint either polls GET /jobs/{id}     ←──gRPC── worker pulls run
+  → hatchet.runs.get_status(run_id)                       → _get_memory(user_id)
+                                                            → DiffMemory.process_and_commit_session()
+                                                            → returns result dict
+                                            ──gRPC─→    ← (engine records terminal status)
+```
+
+The `WritePayload` / `ConsolidatePayload` dataclass is what crosses the
+API/worker boundary (JSON-serialised by Hatchet over gRPC). Closures cannot
+cross processes, so the worker reconstitutes the work from the payload.
 
 ## TERMINOLOGY
 - **JobHandle** — lightweight receipt (job_id, status, submitted_at) returned
@@ -57,29 +81,36 @@ InlineExecutor internals:
 ## KEY FILES
 | File | Description |
 |---|---|
-| `base.py` | `JobStatus`, `JobHandle`, `JobResult`, `TaskExecutor` ABC — the full public contract. |
+| `base.py` | `JobStatus`, `JobHandle`, `JobResult`, `WritePayload`, `ConsolidatePayload`, `TaskExecutor` ABC — the full public contract. |
 | `jobstore.py` | `JobStore`: thread-safe OrderedDict store with FIFO eviction and INFO-level eviction log. |
-| `inline.py` | `InlineExecutor`: default backend; wraps existing `_writer_pool`; per-user locks. |
-| `factory.py` | `build_executor(pool)`: reads `EXECUTOR` env var, constructs and returns the right backend. |
-| `__init__.py` | Re-exports public surface: `TaskExecutor`, `JobHandle`, `JobResult`, `JobStatus`, `build_executor`. |
+| `inline.py` | `InlineExecutor`: default backend; wraps `_writer_pool`; per-user `threading.Lock`; `supports_async_api=False`. |
+| `hatchet.py` | `HatchetExecutor`: submit-side; calls `register_workflows()` on init; submits runs; polls status. |
+| `hatchet_workflows.py` | `WriteInput`/`ConsolidateInput` Pydantic models; `build_hatchet_client()`; `register_workflows()`. Shared by API and worker. |
+| `hatchet_worker.py` | Worker process: attaches `@workflow.task()` handlers; calls `worker.start()`. Entry point for `diffmem-worker` console script. |
+| `factory.py` | `build_executor(pool)`: reads `EXECUTOR` env var, constructs and returns the correct backend. |
+| `__init__.py` | Re-exports public surface: `TaskExecutor`, `JobHandle`, `JobResult`, `JobStatus`, `WritePayload`, `ConsolidatePayload`, `build_executor`. |
 | `CONTEXT.md` | This file — capability-level documentation. |
 
 ## CONSTRAINTS
-- **M1**: executor is constructed in `server.py` lifespan (`app.state.executor =
-  build_executor(_writer_pool)`) but **NOT wired into any endpoint**. Endpoints
-  continue to call `_writer_pool.run_in_executor` directly. No external
-  behaviour change.
-- **M2**: endpoints are wired through `app.state.executor.submit_write()` /
-  `submit_consolidate()`; `?sync=true` param + `GET /jobs/{job_id}` added.
-- **M3**: `HatchetExecutor` added behind optional `[hatchet]` extra; factory
-  updated.
+- **Executor is constructed in `server.py` lifespan** (`app.state.executor =
+  build_executor(_writer_pool)`). The 5 write/consolidate endpoints call
+  `app.state.executor.submit_*()`; `?sync=true|false` query param overrides the
+  default response mode; `GET /memory/{id}/jobs/{job_id}` polls status.
+- **Hatchet backend** (`EXECUTOR=hatchet`): `HatchetExecutor` lives behind the
+  optional `[hatchet]` Poetry extra; factory imports it lazily. Deploy with
+  `deploy/docker-compose.hatchet.yml` — see `docs/deployment-hatchet.md`.
 - **Reads stay direct**: read endpoints (context retrieval, user-entity, timeline)
-  bypass the executor and continue using `_writer_pool.run_in_executor` directly
-  even after M2 — the per-user lock is a write concern only.
-- **No new dependencies in M1**: `httpx` is already a transitive dep; `requests`
-  is a direct dep fallback.
-- **JobStore is in-process only**: entries are lost on restart. This is acceptable
-  for the inline backend; the Hatchet backend will use durable storage.
+  bypass the executor and use `_writer_pool.run_in_executor` directly — the
+  per-user lock is a write/consolidate concern only.
+- **InlineExecutor's JobStore is in-process only**: entries are lost on restart.
+  Acceptable for single-user / local-host use; the Hatchet backend's job state
+  lives in the Hatchet engine's Postgres and survives worker/API restarts.
+- **`supports_async_api`** drives default endpoint behavior:
+  - `InlineExecutor.supports_async_api = False` → endpoints default to sync
+    (block-until-done), preserving the pre-executor API contract.
+  - `HatchetExecutor.supports_async_api = True` → endpoints default to async
+    (return job_id immediately). Callers pass `?sync=true` for the legacy
+    block-until-done shape (used during Annabelle migration window).
 
 ## ATTENTION GUIDANCE
 | When you want to… | Look at… |
@@ -91,9 +122,7 @@ InlineExecutor internals:
 | Change eviction policy or job store implementation | `jobstore.py` |
 | Understand the full capability contract | `base.py` (TaskExecutor ABC) |
 
-## Hatchet Backend (M3)
-
-**Status**: submit-side only (M3). Worker execution added in M4.
+## Hatchet Backend
 
 ### Required env vars
 | Variable | Required | Default | Notes |
@@ -121,18 +150,13 @@ from diffmem.executor import WritePayload, ConsolidatePayload
 |---|---|
 | `hatchet_workflows.py` | Defines `WriteInput` / `ConsolidateInput` Pydantic models, `build_hatchet_client()`, `register_workflows()`. Importable by both API and worker. NO task handlers. |
 | `hatchet.py` | `HatchetExecutor`: submit-side. Calls `register_workflows()` on init, submits runs, queries status, waits for results. |
-| `hatchet_worker.py` (M4) | Worker process: attaches `@workflow.task()` handlers and calls `worker.start()`. |
+| `hatchet_worker.py` | Worker process: attaches `@workflow.task()` handlers and calls `worker.start()`. |
 
 Per-user serialisation is handled by Hatchet's `ConcurrencyExpression(expression="input.user_id", max_runs=1)` — the second run for the same user queues until the first completes, even across worker restarts.
 
-### M3 is submit-side only
-Runs submitted with `EXECUTOR=hatchet` will be enqueued in Hatchet and stay in
-"queued" state until a worker is running. M4 adds `hatchet_worker.py` with the
-actual task handlers that reconstitute `DiffMemory` and execute the work.
-
 ---
 
-## Worker process (M4)
+## Worker process
 
 ### API / worker split
 
@@ -196,12 +220,12 @@ hours and we avoid reconstructing `RepoManager` / `DiffMemory` on every job.
 - Handlers are **sync** (not async) — matches the blocking git+LLM workload.
 - `retries=0` on both tasks — LLM output is non-deterministic; Hatchet's
   default retry could produce duplicate commits. Failures surface immediately
-  to the caller via the polling API. Revisit in M6 ADR.
+  to the caller via the polling API. See ADR ED-011 in `.pi/DECISIONS.md`.
 - Callbacks (`input.callback_url`) are best-effort: POST on success only,
   never on failure, swallowed if the POST itself fails.
 
-### Key files (M4 addition)
+### Deployment
 
-| File | Description |
-|---|---|
-| `hatchet_worker.py` | Worker process: attaches task handlers, starts blocking worker loop. |
+See `deploy/docker-compose.hatchet.yml` for the production compose template
+(API + worker as separate services from the same image) and
+`docs/deployment-hatchet.md` for the full deployment guide.

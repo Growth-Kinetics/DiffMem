@@ -31,12 +31,14 @@ src/diffmem/             — Core package (importable as a library or run as a s
                              branches against a private GitHub repo
     base.py              —   Abstract base classes; BackupBackend defines pull_user() contract
 
-  executor/              — Pluggable task executor (M3–M4 of SESSION_SPEC_2026-06-05-001)
-    base.py              —   AbstractExecutor interface
-    inline_executor.py  —   InlineExecutor: ThreadPoolExecutor + threading.Lock per user
-    hatchet_executor.py —   HatchetExecutor: enqueues workflow runs to Hatchet Cloud
-    hatchet_worker.py   —   Worker process entry point (diffmem-worker console script)
-    factory.py          —   get_executor(): reads EXECUTOR env var, returns correct impl
+  executor/              — Pluggable task executor; backend chosen via EXECUTOR env var
+    base.py              —   TaskExecutor ABC, JobStatus/JobHandle/JobResult, WritePayload/ConsolidatePayload
+    jobstore.py          —   JobStore: thread-safe OrderedDict with FIFO eviction (inline mode)
+    inline.py            —   InlineExecutor: _writer_pool + threading.Lock per user (default)
+    hatchet.py           —   HatchetExecutor: submits workflow runs to Hatchet engine
+    hatchet_workflows.py —   WriteInput/ConsolidateInput models + register_workflows(); shared by API + worker
+    hatchet_worker.py    —   Worker process: @workflow.task() handlers + worker.start() loop
+    factory.py           —   build_executor(pool): reads EXECUTOR env var, returns correct impl
 
 docs/                    — Structural documentation
   CODE_INDEX.md          —   This file
@@ -55,7 +57,8 @@ pyproject.toml           — Package metadata and dependencies
 
 ## Entry Points
 
-- **HTTP server:** `src/diffmem/server.py` → `uvicorn diffmem.server:app`
+- **HTTP server (`diffmem-server`):** `uvicorn diffmem.server:app` → `server.py`
+- **Hatchet worker (`diffmem-worker`):** `hatchet_worker.main()` → `executor/hatchet_worker.py`
 - **Python library:** `from diffmem import DiffMemory` → `api.py`
 - **Write pipeline:** `DiffMemory.process_and_commit_session()` →
   `writer_agent/agent.WriterAgent.process_session()` + `commit_session()`
@@ -74,17 +77,10 @@ pyproject.toml           — Package metadata and dependencies
 
 ## Cross-Capability Flows
 
-5. **Consolidate (out-of-band):** `POST /memory/{id}/consolidate` →
-   `_writer_pool.run_in_executor` → `DiffMemory.consolidate()` →
-   acquire `.diffmem/consolidator.lock` per tool → dedupe → redistribute →
-   link → each tool produces `consolidate(...)`-prefixed commits →
-   fire-and-forget backup of the new commits.
-
-
-1. **Write turn:** `POST /memory/{id}/process-and-commit` → `_writer_pool.run_in_executor`
-   → `WriterAgent.process_and_commit_session()` (blocks in thread) → git commit on
-   `/data/worktrees/{id}` → fire-and-forget backup → HTTP 200 returned immediately after
-   thread completes.
+1. **Write turn:** `POST /memory/{id}/process-and-commit` →
+   `app.state.executor.submit_write()` →
+   **inline:** per-user lock → `_writer_pool` → `DiffMemory.process_and_commit_session()` → git commit on `/data/worktrees/{id}` → fire-and-forget backup, OR
+   **hatchet:** Hatchet engine → `diffmem-worker` process → `DiffMemory.process_and_commit_session()` → git commit → fire-and-forget backup.
 
 2. **Read turn:** `POST /memory/{id}/context` → `_writer_pool.run_in_executor` →
    `DiffMemory.get_context()` → `run_retrieval_agent()` (blocking, in thread) →
@@ -98,3 +94,9 @@ pyproject.toml           — Package metadata and dependencies
    `backup_user(id)` (background task) → `RepoManager.sync_user()` →
    `GitHubBackupBackend.sync_user()`. Also runs on periodic scheduler
    (`BACKUP_INTERVAL_MINUTES`, default 30).
+
+5. **Consolidate (out-of-band):** `POST /memory/{id}/consolidate` →
+   `app.state.executor.submit_consolidate()` → (inline pool or hatchet worker) →
+   `DiffMemory.consolidate()` → acquire `.diffmem/consolidator.lock` per tool →
+   dedupe → redistribute → link → each tool produces `consolidate(...)`-prefixed
+   commits → fire-and-forget backup of the new commits.

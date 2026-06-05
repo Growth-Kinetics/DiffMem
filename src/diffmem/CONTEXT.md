@@ -18,6 +18,10 @@ in the git commit graph. No vector DB, no embeddings.
 - **Outputs:** Context blobs (user entity + timeline + agent-retrieved blocks), commit hashes.
 - **Internal:** `server.py` → `api.py` (DiffMemory) → `writer_agent/` or `retrieval_agent/`
   → git worktree on `/data/worktrees/{user_id}`.
+- **Write turn (detailed):** `API endpoint → app.state.executor.submit_*()` →
+  `InlineExecutor._run_job()` in `_writer_pool` (default) OR
+  `HatchetExecutor.run_workflow()` → Hatchet engine → `diffmem-worker` process →
+  `DiffMemory.process_and_commit_session()` → git worktree.
 
 ## Terminology
 - **Worktree:** Per-user git working directory. Mounted lazily on first request.
@@ -26,6 +30,18 @@ in the git commit graph. No vector DB, no embeddings.
   at mount time (first request after restart) to pick up remote edits.
 - **Writer pool:** `ThreadPoolExecutor(max_workers=4)` in `server.py` that runs all blocking
   operations off the uvicorn event loop — writes, reads, and remote pulls.
+- **Executor:** Pluggable task-scheduling abstraction (`executor/` package). Chosen at startup
+  via the `EXECUTOR` env var. Decouples *what* gets run from *how* it is scheduled.
+- **InlineExecutor:** Default executor backend. Runs jobs directly in `_writer_pool` with a
+  `threading.Lock` per user for serialization. Zero extra infrastructure.
+- **HatchetExecutor:** Optional executor backend (`EXECUTOR=hatchet`). Submits jobs to the
+  Hatchet workflow engine for durable, observable, per-user-serialized execution.
+- **JobHandle:** Lightweight receipt returned immediately by `executor.submit_*()` — contains
+  `job_id`, `status`, and `submitted_at`. Lets endpoints return without blocking.
+- **JobResult:** Full job record: `JobHandle` fields plus `result` dict, `error` string,
+  `started_at`, `completed_at`. Stored in `JobStore` (inline) or Hatchet (hatchet mode).
+- **`EXECUTOR` env var:** Selects the executor backend at startup. `inline` (default) or
+  `hatchet`. Read by `executor/factory.py`.
 
 ## Key Files
 - `server.py` — FastAPI app, all HTTP endpoints, `_writer_pool` thread pool, lifespan.
@@ -39,6 +55,16 @@ in the git commit graph. No vector DB, no embeddings.
 - `consolidator_agent/agent.py` — `ConsolidatorAgent`: out-of-band repair pass
   with three tools (`run_dedupe`, `run_redistribute`, `run_link`). Produces
   `consolidate(...)`-prefixed commits.
+- `executor/factory.py` — `build_executor(pool)`: reads `EXECUTOR` env var, constructs and
+  returns the correct backend (`InlineExecutor` or `HatchetExecutor`).
+- `executor/inline.py` — `InlineExecutor`: default backend; wraps `_writer_pool`; per-user
+  `threading.Lock` for write serialization.
+- `executor/hatchet.py` — `HatchetExecutor`: opt-in backend; submits runs to the Hatchet
+  workflow engine; polls status via Hatchet API.
+- `executor/hatchet_workflows.py` — Workflow registrations (`WriteInput`, `ConsolidateInput`
+  Pydantic models, `register_workflows()`). Shared between API process and worker process.
+- `executor/hatchet_worker.py` — Long-running worker process: attaches `@workflow.task()`
+  handlers, calls `worker.start()`. Consumed by the `diffmem-worker` console script.
 
 ## External Dependencies
 - **OpenRouter** — all LLM calls (writer, onboarding, retrieval agents). Model configured
@@ -57,13 +83,23 @@ in the git commit graph. No vector DB, no embeddings.
   a service restart). If the service stays up for days and you push memory edits from another
   machine, DiffMem won't see them until the next restart. Pull is fast-forward only — diverged
   branches fail cleanly with a warning log.
-- **One writer per user at a time.** No concurrency locks on worktrees; callers must serialize.
+- **Per-user write serialization is enforced server-side by the task executor.**
+  In inline mode: `threading.Lock` per user in `executor/inline.py` (`_get_user_lock()`).
+  In hatchet mode: `ConcurrencyExpression(expression='input.user_id', max_runs=1)` in
+  `executor/hatchet_workflows.py`. Callers no longer need to serialize.
+- **In hatchet mode, the writer/consolidator workload runs in a separate `diffmem-worker`
+  process**, not in the API uvicorn process. Both processes share the `/data` volume and
+  each maintain their own in-process `RepoManager` / `DiffMemory` cache.
 - **Volume at `/data` is required.** Storage and worktrees are on disk; the service has no
   in-memory-only mode.
 - **Health endpoint is always unauthenticated.** Required for Railway/Coolify probes.
 
 ## Attention Guidance
-- For write latency issues: `writer_agent/agent.py` → `process_session` / `commit_session`.
+- For write latency issues (inline mode): `writer_agent/agent.py` → `process_session` / `commit_session`.
+- For write latency issues (hatchet mode): check Hatchet dashboard for queue depth, worker
+  availability, and per-job duration first; then inspect `executor/hatchet_worker.py` handlers.
+- For per-user serialization issues: check `executor/inline.py` `_get_user_lock()` (inline mode)
+  or the workflow's `ConcurrencyExpression` in `executor/hatchet_workflows.py` (hatchet mode).
 - For retrieval quality issues: `retrieval_agent/agent.py` → `run_retrieval_agent`.
 - For remote sync issues (edits from other machines not visible): `storage/github_backup.py`
   → `pull_user()`, `storage/local_storage.py` → `get_user_worktree()` pull call site.
