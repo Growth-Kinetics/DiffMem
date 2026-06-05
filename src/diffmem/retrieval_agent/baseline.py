@@ -94,58 +94,67 @@ def load_recent_timeline(worktree_path: str, days_back: int = 30,
     return blocks[:max_files]
 
 
-def load_always_load_blocks(worktree_path: str,
-                             user_id: str,
-                             max_tokens: int = 3000) -> List[Dict[str, Any]]:
+def load_always_load_blocks(
+    worktree_path: str,
+    user_id: str,
+    max_tokens: int = 3000,
+    entity_dirs: List[Path] = None,
+) -> List[Dict[str, Any]]:
     """
-    Load [ALWAYS_LOAD] blocks from entity files in memories/,
-    capped to a token budget.
+    Load [ALWAYS_LOAD] blocks from entity files, capped to a token budget.
+
+    entity_dirs: absolute paths to scan (from OntologyProfile.entity_dirs).
+        Defaults to [worktree/"memories"] for personal-ontology compatibility.
 
     With hundreds of entities, loading ALL blocks would be enormous.
     We sort by [Strength: High] first and stop when the budget is hit.
     The retrieval agent handles the rest via targeted exploration.
     """
-    memories_path = Path(worktree_path) / "memories"
+    worktree = Path(worktree_path)
+    if entity_dirs is None:
+        entity_dirs = [worktree / "memories"]
+    roots = [d for d in entity_dirs if d.exists()]
     all_blocks = []
 
-    if not memories_path.exists():
+    if not roots:
         return []
 
     user_file_stem = user_id.lower()
 
-    for md_file in memories_path.rglob("*.md"):
-        if md_file.stem.lower() == user_file_stem:
-            continue
-        if "index" in md_file.name.lower():
-            continue
+    for memories_path in roots:
+        for md_file in memories_path.rglob("*.md"):
+            if md_file.stem.lower() == user_file_stem:
+                continue
+            if "index" in md_file.name.lower():
+                continue
 
-        try:
-            content = md_file.read_text(encoding="utf-8")
+            try:
+                content = md_file.read_text(encoding="utf-8")
 
-            pattern = r"/START\s*(.*?)/END"
-            matches = re.findall(pattern, content, re.DOTALL | re.IGNORECASE)
+                pattern = r"/START\s*(.*?)/END"
+                matches = re.findall(pattern, content, re.DOTALL | re.IGNORECASE)
 
-            for block_content in matches:
-                if "[ALWAYS_LOAD]" in block_content:
-                    header_match = re.search(r"###\s*(.+)", block_content, re.MULTILINE)
-                    header = header_match.group(1).strip() if header_match else md_file.stem
+                for block_content in matches:
+                    if "[ALWAYS_LOAD]" in block_content:
+                        header_match = re.search(r"###\s*(.+)", block_content, re.MULTILINE)
+                        header = header_match.group(1).strip() if header_match else md_file.stem
 
-                    strength_match = re.search(r"\[Strength:\s*(High|Medium|Low)\]", block_content, re.IGNORECASE)
-                    strength = strength_match.group(1).lower() if strength_match else "low"
-                    strength_score = {"high": 3, "medium": 2, "low": 1}.get(strength, 0)
+                        strength_match = re.search(r"\[Strength:\s*(High|Medium|Low)\]", block_content, re.IGNORECASE)
+                        strength = strength_match.group(1).lower() if strength_match else "low"
+                        strength_score = {"high": 3, "medium": 2, "low": 1}.get(strength, 0)
 
-                    rel_path = md_file.relative_to(Path(worktree_path))
+                        rel_path = md_file.relative_to(worktree)
 
-                    all_blocks.append({
-                        "source": str(rel_path),
-                        "type": "always_load",
-                        "header": header,
-                        "content": block_content.strip(),
-                        "tokens": _estimate_tokens(block_content),
-                        "_strength": strength_score,
-                    })
-        except Exception as e:
-            logger.warning(f"BASELINE_ALWAYS_LOAD_ERROR: {md_file.name} {e}")
+                        all_blocks.append({
+                            "source": str(rel_path),
+                            "type": "always_load",
+                            "header": header,
+                            "content": block_content.strip(),
+                            "tokens": _estimate_tokens(block_content),
+                            "_strength": strength_score,
+                        })
+            except Exception as e:
+                logger.warning(f"BASELINE_ALWAYS_LOAD_ERROR: {md_file.name} {e}")
 
     # Sort by strength descending, then take blocks until budget is hit
     all_blocks.sort(key=lambda b: b["_strength"], reverse=True)
@@ -171,50 +180,60 @@ def load_always_load_blocks(worktree_path: str,
     return selected
 
 
-def load_always_load_for_entities(worktree_path: str,
-                                   entity_stems: List[str],
-                                   max_tokens: int = 3000) -> List[Dict[str, Any]]:
+def load_always_load_for_entities(
+    worktree_path: str,
+    entity_stems: List[str],
+    max_tokens: int = 3000,
+    entity_dirs: List[Path] = None,
+) -> List[Dict[str, Any]]:
     """
     Load [ALWAYS_LOAD] blocks ONLY for specific entities identified by the agent.
 
     This runs AFTER the agent, as a safety net: the agent decides which entities
     matter, then we load their core blocks to ensure stability.
+
+    entity_dirs: from OntologyProfile.entity_dirs(worktree). Defaults to
+        [worktree/"memories"] for personal-ontology compatibility.
     """
-    memories_path = Path(worktree_path) / "memories"
+    worktree = Path(worktree_path)
+    if entity_dirs is None:
+        entity_dirs = [worktree / "memories"]
+    roots = [d for d in entity_dirs if d.exists()]
     blocks = []
 
-    if not memories_path.exists() or not entity_stems:
+    if not roots or not entity_stems:
         return blocks
 
     target_stems = {s.lower().replace(" ", "_").replace(".", "") for s in entity_stems}
 
-    for md_file in memories_path.rglob("*.md"):
-        if md_file.stem.lower().replace(" ", "_").replace(".", "") not in target_stems:
-            continue
-        if "index" in md_file.name.lower():
-            continue
+    for memories_path in roots:
+        for md_file in memories_path.rglob("*.md"):
+            if md_file.stem.lower().replace(" ", "_").replace(".", "") not in target_stems:
+                continue
+            if "index" in md_file.name.lower():
+                continue
 
-        try:
-            content = md_file.read_text(encoding="utf-8")
+            try:
+                content = md_file.read_text(encoding="utf-8")
 
-            pattern = r"/START\s*(.*?)/END"
-            matches = re.findall(pattern, content, re.DOTALL | re.IGNORECASE)
+                pattern = r"/START\s*(.*?)/END"
+                matches = re.findall(pattern, content, re.DOTALL | re.IGNORECASE)
 
-            for block_content in matches:
-                if "[ALWAYS_LOAD]" in block_content:
-                    header_match = re.search(r"###\s*(.+)", block_content, re.MULTILINE)
-                    header = header_match.group(1).strip() if header_match else md_file.stem
-                    rel_path = md_file.relative_to(Path(worktree_path))
+                for block_content in matches:
+                    if "[ALWAYS_LOAD]" in block_content:
+                        header_match = re.search(r"###\s*(.+)", block_content, re.MULTILINE)
+                        header = header_match.group(1).strip() if header_match else md_file.stem
+                        rel_path = md_file.relative_to(worktree)
 
-                    blocks.append({
-                        "source": str(rel_path),
-                        "type": "always_load",
-                        "header": header,
-                        "content": block_content.strip(),
-                        "tokens": _estimate_tokens(block_content),
-                    })
-        except Exception as e:
-            logger.warning(f"BASELINE_ALWAYS_LOAD_ERROR: {md_file.name} {e}")
+                        blocks.append({
+                            "source": str(rel_path),
+                            "type": "always_load",
+                            "header": header,
+                            "content": block_content.strip(),
+                            "tokens": _estimate_tokens(block_content),
+                        })
+            except Exception as e:
+                logger.warning(f"BASELINE_ALWAYS_LOAD_ERROR: {md_file.name} {e}")
 
     # Cap to token budget
     selected = []

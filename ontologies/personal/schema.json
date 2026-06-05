@@ -7,5 +7,6 @@
     { "name": "events",   "folder": "memories/events",   "index_type": "concept" }
   ],
   "timeline_enabled": true,
-  "user_entity_enabled": true
+  "user_entity_enabled": true,
+  "contexts_folder": "memories/contexts"
 }

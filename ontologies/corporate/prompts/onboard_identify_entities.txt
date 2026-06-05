@@ -34,7 +34,7 @@ Information: {user_info}
 ```
 
 **Guidelines:**
-- Use PascalCase for entity names: `AliceSmith`, `DiffMemProject`, `DecideGitStorage`.
+- Use snake_case for entity names: `alice_smith`, `diff_mem_project`, `decide_git_storage`.
 - Select 3–8 of the most important entities — quality over quantity.
 - Each entity should be substantial enough to grow over time.
 

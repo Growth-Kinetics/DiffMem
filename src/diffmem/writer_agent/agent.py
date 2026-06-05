@@ -453,10 +453,13 @@ class WriterAgent:
         expected_filename = entity_name.lower().replace(' ', '_').replace('.', '') + '.md'
         folder_map = self.ontology.folder_map
         # Look up by exact type name, then try singular/plural variants
+        _et = entity_type.lower()
+        _singular = _et[:-1] if _et.endswith('s') else _et  # safe suffix strip (not rstrip)
+        _plural = _et if _et.endswith('s') else _et + 's'
         rel_folder = (
-            folder_map.get(entity_type.lower())
-            or folder_map.get(entity_type.lower().rstrip('s'))  # strip trailing 's'
-            or folder_map.get(entity_type.lower() + 's')         # add 's'
+            folder_map.get(_et)
+            or folder_map.get(_singular)
+            or folder_map.get(_plural)
             or self.ontology.default_folder(self.repo_path).relative_to(self.repo_path).as_posix()
         )
         search_dir = self.repo_path / rel_folder

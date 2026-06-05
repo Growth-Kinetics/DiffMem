@@ -4,7 +4,7 @@ Your task is to create a well-structured entity file that captures the essential
 
 **Key Requirements:**
 1. Use clean Markdown with clear headers and sections.
-2. Cross-references to other entities MUST use wikilinks: `[[EntityName]]`.
+2. Cross-references to other entities use wikilinks: `[[entity_name]]` (snake_case, no `.md`).
 3. Do NOT include a `## SEMANTIC INDEX` section — it is generated automatically.
 4. Do NOT invent information — only use what's provided or can be reasonably inferred.
 5. The file should serve as a navigational hub that other entities link back to.

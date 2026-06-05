@@ -20,7 +20,7 @@ CRITICAL: Identify updates using EXACT text matching with sufficient context. Ea
 
 Rules:
 - Include enough context in `search_text` to uniquely identify the location.
-- Cross-references to other entities MUST use wikilinks: `[[EntityName]]` (no path prefix, no `.md`).
+- Cross-references to other entities use wikilinks: `[[entity_name]]` (no path prefix, no `.md`).
 - Update Status fields (e.g., project status, commitment status, decision status) when the input signals a change.
 - For new sections, identify the preceding content and use `insert_after`.
 - New sections should NEVER be created after the `## SEMANTIC INDEX` block.

@@ -10,8 +10,8 @@ Entity kinds:
 Rules (in priority order):
 1. Name stability: treat spelling variations of existing names as an update to the same entity (≥80% string similarity).
 2. Create sparingly: propose NEW only if the entity is clearly distinct, is central to the input, and needs multi-field storage. Ignore passing references to generic things.
-3. Decisions: auto-generate a descriptive PascalCase filename e.g. `DecideGitStorage`, `ChooseDeploymentPlatform`.
-4. Commitments: use a descriptive PascalCase slug e.g. `DeliverV1API`, `ReviewContractByFriday`.
+3. Decisions: auto-generate a descriptive snake_case filename e.g. `decide_git_storage`, `choose_deployment_platform`.
+4. Commitments: use a descriptive snake_case slug e.g. `deliver_v1_api`, `review_contract_by_friday`.
 5. Ignore entities in the existing index that are not mentioned in the input.
 6. If nothing actionable, return empty lists.
 
@@ -25,11 +25,11 @@ Your JSON reply — valid, single-line summary in `summary`:
 ```json
 {{
   "entities_to_create": [
-    {{"name":"AliceSmith","type":"people","summary":"Lead engineer joining the DiffMem project"}},
-    {{"name":"DiffMem","type":"projects","summary":"Git-based memory backend for AI agents"}},
-    {{"name":"DecideGitStorage","type":"decisions","summary":"Decision to use Git as the primary storage layer"}},
-    {{"name":"DeliverV1API","type":"commitments","summary":"Commitment to deliver the v1 API by end of quarter"}},
-    {{"name":"StripePayments","type":"external","summary":"Payment processing vendor for the platform"}}
+    {{"name":"alice_smith","type":"people","summary":"Lead engineer joining the DiffMem project"}},
+    {{"name":"diff_mem","type":"projects","summary":"Git-based memory backend for AI agents"}},
+    {{"name":"decide_git_storage","type":"decisions","summary":"Decision to use Git as the primary storage layer"}},
+    {{"name":"deliver_v1_api","type":"commitments","summary":"Commitment to deliver the v1 API by end of quarter"}},
+    {{"name":"stripe_payments","type":"external","summary":"Payment processing vendor for the platform"}}
   ],
   "entities_to_update": [
     {{"name":"BobJones","type":"people"}}

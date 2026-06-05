@@ -191,6 +191,7 @@ class DiffMemory:
                 str(self.repo_path),
                 plan.entities_identified,
                 max_tokens=al_budget,
+                entity_dirs=self.ontology.entity_dirs(self.repo_path),
             )
 
             return {
@@ -301,6 +302,7 @@ class DiffMemory:
             self.user_id,
             self.openrouter_api_key,
             self.model,
+            ontology=self.ontology,
         )
 
     def consolidate(self,
@@ -389,8 +391,11 @@ class DiffMemory:
                 'error': 'User has not been onboarded'
             }
 
-        memories_path = self.user_path / "memories"
-        memory_files = list(memories_path.rglob('*.md')) if memories_path.exists() else []
+        memory_files = [
+            f
+            for d in self.ontology.entity_dirs(self.repo_path) if d.exists()
+            for f in d.rglob('*.md')
+        ]
 
         return {
             'repo_path': str(self.repo_path),

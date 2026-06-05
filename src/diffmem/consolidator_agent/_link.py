@@ -182,6 +182,7 @@ def run(
     llm_call: Callable[[str, bool], Any],
     user_id: str,
     window: int = 3,
+    entity_dirs: List[Path] = None,
 ) -> Dict[str, Any]:
     commits = _commits_in_window(repo, window)
     cooccurrence = _build_cooccurrence(commits)

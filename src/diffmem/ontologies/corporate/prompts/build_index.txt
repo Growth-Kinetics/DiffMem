@@ -18,7 +18,7 @@ Git Statistics for this file:
 
 Schema (return minified JSON, no line breaks; validate against it):
 {{
-"name": "string",             // canonical PascalCase name
+"name": "string",             // canonical name (snake_case, matches filename stem)
 "aliases": ["alt1"],          // optional alternative names
 "type": "human|project|decision|commitment|company|concept",
 "role": "short purpose tag",  // <15 tokens
@@ -44,4 +44,4 @@ File Content:
 {file_content}
 
 Example ideal return:
-{{"name":"AliceSmith","aliases":["Alice"],"type":"human","role":"Lead Engineer","strength":"Medium","hard_cues":["lead engineer","alice smith","diffmem","backend"],"soft_cues":["direct communicator","detail-oriented"],"emotional_cues":["trusted colleague"],"related_entities":["diffmem","decide_git_storage"]}}
+{{"name":"alice_smith","aliases":["alice"],"type":"human","role":"Lead Engineer","strength":"Medium","hard_cues":["lead engineer","alice smith","diffmem","backend"],"soft_cues":["direct communicator","detail-oriented"],"emotional_cues":["trusted colleague"],"related_entities":["diff_mem","decide_git_storage"]}}

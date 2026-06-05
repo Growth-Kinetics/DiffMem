@@ -229,9 +229,10 @@ def run(
     prompts_dir: Path,
     llm_call: Callable[[str, bool], Any],
     user_id: str,
+    entity_dirs: List[Path] = None,
 ) -> Dict[str, Any]:
     """Execute the dedupe pipeline. Returns the canonical result dict."""
-    entities = scan_entities(worktree)
+    entities = scan_entities(worktree, entity_dirs=entity_dirs)
     candidates = find_candidate_pairs(entities)
     commits: List[str] = []
     merges = 0

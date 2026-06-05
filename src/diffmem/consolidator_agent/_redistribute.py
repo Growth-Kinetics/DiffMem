@@ -81,6 +81,7 @@ def _apply_moves(
     worktree: Path,
     *,
     llm_call: Callable[[str, bool], Any],
+    contexts_folder: Path = None,
     prompts_dir: Path,
 ) -> Dict[str, Any]:
     """Mutate source_content in-memory by removing all source_sections.
@@ -138,7 +139,9 @@ def _apply_moves(
         if not name or not extracted:
             continue
         slug = _slugify(name)
-        new_path = worktree / "memories" / "contexts" / f"{slug}.md"
+        # Use contexts_folder from ontology; default to memories/contexts for personal
+        _ctx_folder = contexts_folder if contexts_folder is not None else (worktree / "memories" / "contexts")
+        new_path = _ctx_folder / f"{slug}.md"
         if new_path.exists():
             logger.warning("REDISTRIBUTE_NEW_CONTEXT_EXISTS: %s — skipping", new_path)
             continue
@@ -155,7 +158,7 @@ def _apply_moves(
             prompts_dir=prompts_dir,
             fallback_name=name,
         )
-        si["file"] = f"memories/contexts/{slug}.md"
+        si["file"] = str(new_path.relative_to(worktree)).replace("\\", "/")
         final_content = write_with_semantic_index(extracted.rstrip() + "\n", si)
         _write_text(new_path, final_content)
         touched_paths.append(new_path)
@@ -204,10 +207,14 @@ def _identify_oversized(entities: List[Dict[str, Any]], soft_cap: int) -> List[D
     return oversized
 
 
-def _scan_with_user_entity(worktree: Path, user_id: str) -> List[Dict[str, Any]]:
+def _scan_with_user_entity(
+    worktree: Path,
+    user_id: str,
+    entity_dirs: List[Path] = None,
+) -> List[Dict[str, Any]]:
     """scan_entities + the user entity at <worktree>/{user_id}.md, since the
-    user file lives at the worktree root, not under memories/."""
-    entities = scan_entities(worktree)
+    user file lives at the worktree root, not under entity dirs."""
+    entities = scan_entities(worktree, entity_dirs=entity_dirs)
     user_file = _user_entity_path(worktree, user_id)
     if user_file.exists():
         try:
@@ -236,8 +243,10 @@ def run(
     llm_call: Callable[[str, bool], Any],
     user_id: str,
     soft_cap_tokens: int = 32000,
+    entity_dirs: List[Path] = None,
+    contexts_folder: Path = None,
 ) -> Dict[str, Any]:
-    entities = _scan_with_user_entity(worktree, user_id)
+    entities = _scan_with_user_entity(worktree, user_id, entity_dirs=entity_dirs)
     oversized = _identify_oversized(entities, soft_cap_tokens)
 
     if not oversized:
@@ -283,6 +292,7 @@ def run(
             worktree,
             llm_call=llm_call,
             prompts_dir=prompts_dir,
+            contexts_folder=contexts_folder,
         )
 
         # Write the slimmed source.

@@ -87,40 +87,50 @@ def write_with_semantic_index(content: str, semantic_index: Dict[str, Any]) -> s
 # --- index.md scanning --------------------------------------------------------
 
 
-def scan_entities(worktree: Path) -> List[Dict[str, Any]]:
-    """Walk memories/ and return list of dicts:
+def scan_entities(
+    worktree: Path,
+    entity_dirs: List[Path] = None,
+) -> List[Dict[str, Any]]:
+    """Walk entity directories and return list of dicts:
         {file, path (relative), content, semantic_index, tokens}
     Files without a SEMANTIC INDEX are skipped (logged).
+
+    entity_dirs: explicit list of absolute entity folder paths (from
+        OntologyProfile.entity_dirs(worktree)). Defaults to [worktree/"memories"]
+        for backwards compatibility with personal-ontology worktrees.
     """
-    memories = worktree / "memories"
-    if not memories.exists():
+    if entity_dirs is None:
+        entity_dirs = [worktree / "memories"]
+    roots = [d for d in entity_dirs if d.exists()]
+    if not roots:
         return []
     out: List[Dict[str, Any]] = []
-    for md in memories.rglob("*.md"):
-        rel = md.relative_to(worktree)
-        if md.name in {"index.md", "episodes_index.md"}:
-            continue
-        if "/sessions/" in str(rel).replace("\\", "/"):
-            continue
-        try:
-            content = md.read_text(encoding="utf-8")
-        except OSError as e:
-            logger.warning("ENTITY_READ_FAIL: path=%s err=%s", rel, e)
-            continue
-        si = extract_semantic_index(content)
-        if si is None:
-            logger.info("ENTITY_NO_INDEX: path=%s (skipped)", rel)
-            continue
-        si["file"] = str(rel).replace("\\", "/")  # enforce canonical path
-        out.append(
-            {
-                "file": md,
-                "path": str(rel).replace("\\", "/"),
-                "content": content,
-                "semantic_index": si,
-                "tokens": estimate_tokens(content),
-            }
-        )
+    for memories in roots:
+        for md in memories.rglob("*.md"):
+            rel = md.relative_to(worktree)
+            if md.name in {"index.md", "episodes_index.md"}:
+                continue
+            if "/sessions/" in str(rel).replace("\\", "/"):
+                continue
+            try:
+                content = md.read_text(encoding="utf-8")
+            except OSError as e:
+                logger.warning("ENTITY_READ_FAIL: path=%s err=%s", rel, e)
+                continue
+            si = extract_semantic_index(content)
+            if si is None:
+                logger.info("ENTITY_NO_INDEX: path=%s (skipped)", rel)
+                continue
+            si["file"] = str(rel).replace("\\", "/")  # enforce canonical path
+            out.append(
+                {
+                    "file": md,
+                    "path": str(rel).replace("\\", "/"),
+                    "content": content,
+                    "semantic_index": si,
+                    "tokens": estimate_tokens(content),
+                }
+            )
     return out
 
 
@@ -209,12 +219,21 @@ def get_file_git_stats(repo, repo_path: Path, file_path: Path) -> Dict[str, Any]
 # --- master index rebuild -----------------------------------------------------
 
 
-def rebuild_master_index(worktree: Path, user_id: str, repo=None) -> Path:
-    """Scan memories/, collect SEMANTIC INDEX blocks, write index.md sorted by
+def rebuild_master_index(
+    worktree: Path,
+    user_id: str,
+    repo=None,
+    entity_dirs: List[Path] = None,
+) -> Path:
+    """Scan entity dirs, collect SEMANTIC INDEX blocks, write index.md sorted by
     memory_strength. If `repo` is given (gitpython Repo), augments entries with
-    live git stats. Returns the index file path."""
+    live git stats. Returns the index file path.
+
+    entity_dirs: from OntologyProfile.entity_dirs(worktree). Defaults to
+        [worktree/"memories"] for personal-ontology backwards compatibility.
+    """
     entries: List[Dict[str, Any]] = []
-    for ent in scan_entities(worktree):
+    for ent in scan_entities(worktree, entity_dirs=entity_dirs):
         si = dict(ent["semantic_index"])
         if repo is not None:
             stats = get_file_git_stats(repo, worktree, ent["file"])

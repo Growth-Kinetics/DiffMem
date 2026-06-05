@@ -9,5 +9,6 @@
     { "name": "external",    "folder": "entities/external",    "index_type": "company"    }
   ],
   "timeline_enabled": true,
-  "user_entity_enabled": true
+  "user_entity_enabled": true,
+  "contexts_folder": "entities/external"
 }

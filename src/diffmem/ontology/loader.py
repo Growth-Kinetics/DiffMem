@@ -9,7 +9,7 @@
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -55,6 +55,13 @@ class OntologyProfile:
         """Fallback entity folder when an entity type is unknown.
         Returns the first entity type's folder (safer than a hardcoded 'memories/')."""
         return repo_root / self.entity_types[0]["folder"]
+
+    def contexts_folder(self, repo_root: Path) -> Path:
+        """Folder for orphan-theme extraction by the redistribute consolidator tool.
+        Configured via schema.json 'contexts_folder'; defaults to the first entity
+        type's folder if not specified (never falls back to a hardcoded path)."""
+        rel = self.schema.get("contexts_folder") or self.entity_types[0]["folder"]
+        return repo_root / rel
 
     @property
     def index_type_vocab(self) -> List[str]:

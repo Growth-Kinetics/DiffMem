@@ -20,14 +20,15 @@ Below is an example of a well-structured entity file to guide your formatting:
 Generate the full Markdown content for "{entity_name}".
 
 Formatting rules:
-- File naming convention is PascalCase (e.g., `AliceSmith.md`, `DecideGitStorage.md`).
+- File naming convention is snake_case (e.g., `alice_smith.md`, `decide_git_storage.md`) — the engine
+  lowercases and underscores the entity name automatically; write names in natural form.
 - Use the correct template for the entity type:
   - **people**: `# Person: [Name]` with sections: Core Metadata, Active Context & Relationships, Background & Interaction Notes.
   - **projects**: `# Project: [Name]` with sections: Metadata (Status/Owner/Start Date), Objectives & Scope, Related Entities.
   - **decisions**: `# Decision: [Name]` with sections: Metadata (Status/Deciders/Date), Context & Problem Statement, Decision Outcome, Related Links.
   - **commitments**: `# Commitment: [Name]` with sections: Metadata (Status/Assignee/Due Date), Description, Related Links.
   - **external**: `# External: [Name]` with sections: Metadata (Type/Primary Contact), Engagement Scope, Related Links.
-- Cross-references to other entities MUST use wikilinks: `[[EntityName]]` (no path prefix, no `.md`).
+- Cross-references to other entities use wikilinks: `[[entity_name]]` (no path prefix, no `.md`).
 - Do NOT invent facts. Extrapolate cautiously from the session — never fabricate contact details, dates, or specifics you don't know.
 - Do NOT include a `## SEMANTIC INDEX` section — it is generated automatically.
 

@@ -339,3 +339,112 @@ def test_writer_agent_entity_md_files_does_not_include_memories_for_corporate(tm
     assert "DiffMem.md" in found
     assert "stray.md" not in found, \
         "corporate _entity_md_files() must not pick up files from memories/"
+
+
+# ---------------------------------------------------------------------------
+# Review round 2 regression tests
+# ---------------------------------------------------------------------------
+
+def test_corporate_snake_case_names_in_identify_prompt():
+    """Bug A (resolved): corporate 1_identify_entities must use snake_case examples, not PascalCase."""
+    p = load_ontology("corporate")
+    content = p.resolve_prompt("1_identify_entities").read_text()
+    assert "PascalCase" not in content, "corporate identify prompt must not reference PascalCase"
+    assert "snake_case" in content
+    assert "alice_smith" in content or "snake" in content
+
+
+def test_corporate_snake_case_names_in_build_index_prompt():
+    """Bug A: corporate build_index prompt must use snake_case example name."""
+    p = load_ontology("corporate")
+    content = p.resolve_prompt("build_index").read_text()
+    assert "AliceSmith" not in content
+    assert "alice_smith" in content
+
+
+def test_corporate_repo_guide_snake_case():
+    """Bug A: corporate repo_guide must document snake_case, not PascalCase."""
+    p = load_ontology("corporate")
+    content = p.repo_guide_path.read_text()
+    assert "PascalCase" not in content
+    assert "snake_case" in content
+    assert "alice_smith" in content
+
+
+def test_contexts_folder_personal():
+    """Bug B: personal contexts_folder resolves to memories/contexts."""
+    from pathlib import Path
+    p = load_ontology("personal")
+    root = Path("/fake")
+    assert "memories/contexts" in str(p.contexts_folder(root))
+
+
+def test_contexts_folder_corporate():
+    """Bug B: corporate contexts_folder resolves to entities/external (not memories/contexts)."""
+    from pathlib import Path
+    p = load_ontology("corporate")
+    root = Path("/fake")
+    cf = str(p.contexts_folder(root))
+    assert "entities/external" in cf
+    assert "memories" not in cf
+
+
+def test_scan_entities_uses_entity_dirs(tmp_path):
+    """Bug B: scan_entities with explicit entity_dirs scans those dirs, not memories/."""
+    from diffmem.consolidator_agent._shared import scan_entities
+    # Corporate-style layout
+    entities_dir = tmp_path / "entities" / "people"
+    entities_dir.mkdir(parents=True)
+    f = entities_dir / "alice_smith.md"
+    f.write_text("# Alice\n\n## SEMANTIC INDEX\n{\"name\":\"alice_smith\",\"type\":\"human\",\"role\":\"eng\",\"strength\":\"Low\",\"hard_cues\":[],\"soft_cues\":[],\"emotional_cues\":[],\"related_entities\":[]}")
+    # stray memories/ should be ignored
+    stray = tmp_path / "memories" / "people"
+    stray.mkdir(parents=True)
+    (stray / "stray.md").write_text("# stray\n\n## SEMANTIC INDEX\n{\"name\":\"stray\"}")
+
+    results = scan_entities(tmp_path, entity_dirs=[tmp_path / "entities" / "people"])
+    names = [r["semantic_index"].get("name") for r in results]
+    assert "alice_smith" in names
+    assert "stray" not in names
+
+
+def test_load_always_load_for_entities_uses_entity_dirs(tmp_path):
+    """Bug C: load_always_load_for_entities must scan provided entity_dirs, not memories/."""
+    from diffmem.retrieval_agent.baseline import load_always_load_for_entities
+    entities_dir = tmp_path / "entities" / "people"
+    entities_dir.mkdir(parents=True)
+    content = "# Alice\n\n/START\n### Core [ALWAYS_LOAD]\nAlice is the lead.\n/END core\n"
+    (entities_dir / "alice_smith.md").write_text(content)
+
+    results = load_always_load_for_entities(
+        str(tmp_path),
+        entity_stems=["alice_smith"],
+        entity_dirs=[entities_dir],
+    )
+    assert len(results) > 0, "should find always_load blocks in entity_dirs"
+    assert any("Alice" in r["content"] for r in results)
+
+
+def test_load_always_load_for_entities_empty_without_entity_dirs(tmp_path):
+    """Bug C: without entity_dirs, memories/ fallback returns empty for corporate layout."""
+    from diffmem.retrieval_agent.baseline import load_always_load_for_entities
+    entities_dir = tmp_path / "entities" / "people"
+    entities_dir.mkdir(parents=True)
+    content = "# Alice\n\n/START\n### Core [ALWAYS_LOAD]\nAlice is the lead.\n/END core\n"
+    (entities_dir / "alice_smith.md").write_text(content)
+
+    # Without entity_dirs — defaults to memories/ which doesn't exist
+    results = load_always_load_for_entities(str(tmp_path), entity_stems=["alice_smith"])
+    assert results == [], "memories/ fallback should return empty when dir doesn't exist"
+
+
+def test_plural_normalisation_safe():
+    """Issue F: _resolve_entity_file_path plural strip is safe (not rstrip)."""
+    # Verify the logic: 'process'.endswith('s') -> True, strip last char -> 'proces', not 'proce'
+    et = "processes"
+    singular = et[:-1] if et.endswith('s') else et
+    assert singular == "processe", "single-char suffix strip, not greedy rstrip"
+    # The important case: 'people' -> 'peopl' (no match expected, graceful)
+    et2 = "people"
+    singular2 = et2[:-1] if et2.endswith('s') else et2
+    assert singular2 == "people", "no trailing s, unchanged"

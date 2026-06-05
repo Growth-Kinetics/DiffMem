@@ -29,23 +29,23 @@ semantics.
 
 ## File Naming Convention
 
-**Files MUST use PascalCase** (or clean snake_case/kebab-case for multi-word names):
-- `entities/people/AliceSmith.md`
-- `entities/projects/DiffMem.md`
-- `entities/decisions/DecideGitStorage.md`
-- `entities/commitments/DeliverV1API.md`
-- `entities/external/StripePayments.md`
+Files use **snake_case** (all lowercase, words separated by underscores). The engine applies this automatically:
+- `entities/people/alice_smith.md`
+- `entities/projects/diff_mem.md`
+- `entities/decisions/decide_git_storage.md`
+- `entities/commitments/deliver_v1_api.md`
+- `entities/external/stripe_payments.md`
 
 ## Linking Between Entities
 
 Interactions with other entities MUST be declared using **Obsidian-style wikilinks**:
 ```
-[[EntityName]]
+[[entity_name]]
 ```
-Examples inside `entities/projects/DiffMem.md`:
-- `[[AliceSmith]]` (a person)
-- `[[DecideGitStorage]]` (a decision)
-- `[[DeliverV1API]]` (a commitment)
+Examples inside `entities/projects/diff_mem.md`:
+- `[[alice_smith]]` (a person)
+- `[[decide_git_storage]]` (a decision)
+- `[[deliver_v1_api]]` (a commitment)
 
 One wikilink per target entity per file. Link the first or most prominent mention.
 The `## SEMANTIC INDEX` section at the bottom of each file is off-limits to link insertion.
@@ -65,8 +65,8 @@ Individuals — internal team members, external contacts, stakeholders.
 - Affiliation: [Internal or External]
 
 ## Active Context & Relationships
-- Projects involved: [[ProjectName]]
-- Key commitments: [[CommitmentName]]
+- Projects involved: [[project_name]]
+- Key commitments: [[commitment_name]]
 
 ## Background & Interaction Notes
 - Summary of history, preferences, and key notes.
@@ -81,17 +81,17 @@ Active or historical projects — any bounded body of work with goals and team.
 
 ## Metadata
 - Status: [Active / Paused / Completed]
-- Owner: [[LeadPerson]]
+- Owner: [[lead_person]]
 - Start Date: [YYYY-MM-DD]
 
 ## Objectives & Scope
 - Essential Goals: [Bullet list of project goals]
 
 ## Related Entities
-- Team: [[PersonA]], [[PersonB]]
-- External Partners: [[ExternalEntityName]]
-- Key Decisions: [[DecisionName]]
-- Deliverables: [[CommitmentName]]
+- Team: [[person_a]], [[person_b]]
+- External Partners: [[external_entity_name]]
+- Key Decisions: [[decision_name]]
+- Deliverables: [[commitment_name]]
 ```
 
 ### 3. Decisions (`entities/decisions/`)
@@ -104,7 +104,7 @@ consequences. Use the `Status` field to distinguish live from superseded decisio
 
 ## Metadata
 - Status: [Proposed / Accepted / Rejected / Superseded]
-- Deciders: [[PersonA]], [[PersonB]]
+- Deciders: [[person_a]], [[person_b]]
 - Date: [YYYY-MM-DD]
 
 ## Context & Problem Statement
@@ -115,8 +115,8 @@ consequences. Use the `Status` field to distinguish live from superseded decisio
 - Consequences, trade-offs, and downstream impacts.
 
 ## Related Links
-- Project scope: [[ProjectName]]
-- Alternatives discussed with: [[ExternalEntityName]]
+- Project scope: [[project_name]]
+- Alternatives discussed with: [[external_entity_name]]
 ```
 
 ### 4. Commitments (`entities/commitments/`)
@@ -128,14 +128,14 @@ Promises, deliverables, obligations, or milestones — anything someone is accou
 
 ## Metadata
 - Status: [Pending / Active / Fulfilled / Broken]
-- Assignee: [[PersonName]]
+- Assignee: [[person_name]]
 - Due Date: [YYYY-MM-DD]
 
 ## Description
 - Specific deliverables, obligations, or milestones.
 
 ## Related Links
-- Associated Project: [[ProjectName]]
+- Associated Project: [[project_name]]
 ```
 
 ### 5. External Entities (`entities/external/`)
@@ -147,14 +147,14 @@ External organizations, vendors, clients, API services, or strategic partners.
 
 ## Metadata
 - Type: [Partner / Vendor / API Service / Client]
-- Primary Contact: [[PersonName]]
+- Primary Contact: [[person_name]]
 
 ## Engagement Scope
 - Summary of agreement, API interactions, or strategic alignment.
 
 ## Related Links
-- Linked Projects: [[ProjectName]]
-- Associated Commitments: [[CommitmentName]]
+- Linked Projects: [[project_name]]
+- Associated Commitments: [[commitment_name]]
 ```
 
 ## SEMANTIC INDEX
@@ -164,7 +164,7 @@ DiffMem after each session. Do not edit it manually. It is a machine-readable
 JSON descriptor used by the retrieval agent for fast entity triage:
 
 ```json
-{"name":"AliceSmith","type":"human","role":"Lead Engineer","strength":"Medium","hard_cues":["lead engineer","alice","smith"],"soft_cues":["direct communicator"],"emotional_cues":["trusted colleague"],"related_entities":["diffmem","decide_git_storage"]}
+{"name":"alice_smith","type":"human","role":"Lead Engineer","strength":"Medium","hard_cues":["lead engineer","alice","smith"],"soft_cues":["direct communicator"],"emotional_cues":["trusted colleague"],"related_entities":["diff_mem","decide_git_storage"]}
 ```
 
 ## Commit Style
