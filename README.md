@@ -88,6 +88,14 @@ service port or proxy target, use the same value you set for `PORT`.
 
 Leave `REQUIRE_AUTH=false` (the default) if you're only calling DiffMem from another service on the same Coolify instance. Set `REQUIRE_AUTH=true` + `API_KEY=<long-random-string>` if you expose the domain publicly.
 
+### Production deployment with Hatchet
+
+For durable, observable, per-user-serialized task execution with [Hatchet](https://cloud.onhatchet.run)
+on a Hetzner Cloud VPS, see **[docs/deployment-hatchet.md](docs/deployment-hatchet.md)**.
+
+The production compose file is `deploy/docker-compose.hatchet.yml` — it runs two services
+from the same image: `diffmem-api` (HTTP server) and `diffmem-worker` (Hatchet consumer).
+
 ### Plain Docker Compose
 
 On any Linux box with Docker:
@@ -130,6 +138,10 @@ Everything is configured via environment variables. Only `OPENROUTER_API_KEY` is
 | `GITHUB_TOKEN` | *(unset)* | PAT with `repo` scope, for `github` backup |
 | `STORAGE_PATH` | `/data/storage` | Where the central git repo lives |
 | `WORKTREE_ROOT` | `/data/worktrees` | Where per-user worktrees are mounted |
+| `EXECUTOR` | `inline` | Task executor: `inline` (default) or `hatchet` (durable, observable) |
+| `HATCHET_CLIENT_TOKEN` | *(unset)* | Hatchet Cloud API token; required when `EXECUTOR=hatchet` |
+| `HATCHET_NAMESPACE` | `diffmem` | Namespace prefix for Hatchet workflow and worker names |
+| `HATCHET_WORKER_SLOTS` | `10` | In-process concurrency slots per worker replica |
 
 ### Enabling GitHub backup (optional)
 
@@ -275,8 +287,9 @@ What's working:
 
 Known limitations:
 - Agent retrieval quality depends on the LLM model used.
-- No multi-user concurrency locks (one worktree = one writer at a time). Callers must
-  serialize writes for the same user.
+- Per-user write serialization is now enforced server-side by the task executor
+  (inline mode uses `threading.Lock`; hatchet mode uses `ConcurrencyExpression`).
+  Callers no longer need to serialize.
 - Write endpoints (`process-and-commit`, `process-session`, `commit-session`) run the
   writer agent in a background thread pool and can take 60–600s for large sessions.
   The HTTP response is returned once the write completes; the connection stays open.

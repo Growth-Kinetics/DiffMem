@@ -21,7 +21,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
 
       # --- Optional ---
-      DEFAULT_MODEL: ${DEFAULT_MODEL:?Set DEFAULT_MODEL to an OpenRouter model slug}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-}  # required at runtime; set in Coolify or .env
       RETRIEVAL_MODEL: ${RETRIEVAL_MODEL:-}
       PORT: ${PORT:-8000}
 

@@ -31,14 +31,24 @@ src/diffmem/             — Core package (importable as a library or run as a s
                              branches against a private GitHub repo
     base.py              —   Abstract base classes; BackupBackend defines pull_user() contract
 
+  executor/              — Pluggable task executor (M3–M4 of SESSION_SPEC_2026-06-05-001)
+    base.py              —   AbstractExecutor interface
+    inline_executor.py  —   InlineExecutor: ThreadPoolExecutor + threading.Lock per user
+    hatchet_executor.py —   HatchetExecutor: enqueues workflow runs to Hatchet Cloud
+    hatchet_worker.py   —   Worker process entry point (diffmem-worker console script)
+    factory.py          —   get_executor(): reads EXECUTOR env var, returns correct impl
+
 docs/                    — Structural documentation
   CODE_INDEX.md          —   This file
-  deployment.md          —   Docker / Coolify / Railway deployment guide
+  deployment.md          —   Docker / Coolify inline-mode deployment guide
+  deployment-hatchet.md  —   Hetzner + Coolify + Hatchet Cloud production deployment guide
 
 scripts/                 — Utility scripts (Docker healthcheck helpers, etc.)
 tests/                   — Test suite
-Dockerfile               — Production container image
-docker-compose.yml       — Self-hosting entry point (mounts /data volume)
+Dockerfile               — Production container image (includes hatchet-sdk)
+docker-compose.yml       — Self-hosting entry point, inline executor (mounts /data volume)
+deploy/
+  docker-compose.hatchet.yml — Production template: diffmem-api + diffmem-worker services
 repo_guide.md            — Memory schema reference (copied into each user worktree)
 pyproject.toml           — Package metadata and dependencies
 ```

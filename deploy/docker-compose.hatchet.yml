@@ -1,0 +1,92 @@
+# deploy/docker-compose.hatchet.yml -- Production deployment template.
+#
+# Two services from one image:
+#   - diffmem-api    : FastAPI HTTP server, enqueues jobs into Hatchet
+#   - diffmem-worker : long-running consumer of Hatchet workflow runs
+#
+# Both share the /data volume (worktrees, storage). Worker is outbound-only.
+#
+# See docs/deployment-hatchet.md for full setup notes (Hatchet Cloud, Coolify).
+
+services:
+  diffmem-api:
+    build: ..                                    # parent dir contains the Dockerfile
+    # image: ghcr.io/growth-kinetics/diffmem:latest
+    container_name: diffmem-api
+    restart: unless-stopped
+    command: ["diffmem-server"]                  # console script defined in pyproject.toml
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"
+    environment:
+      # --- Required (set in Coolify env tab; validated at runtime) ---
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-}          # e.g. anthropic/claude-3.5-sonnet
+      RETRIEVAL_MODEL: ${RETRIEVAL_MODEL:-}
+      PORT: ${PORT:-8000}
+
+      # Executor -- forced hatchet for this compose; inline-mode is docker-compose.yml
+      EXECUTOR: hatchet
+      HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN:-}
+      HATCHET_NAMESPACE: ${HATCHET_NAMESPACE:-diffmem}
+      HATCHET_CLIENT_HOST_PORT: ${HATCHET_CLIENT_HOST_PORT:-}
+      HATCHET_CLIENT_TLS_STRATEGY: ${HATCHET_CLIENT_TLS_STRATEGY:-tls}
+
+      # Auth. Leave false if behind Coolify/Traefik on a trusted network.
+      REQUIRE_AUTH: ${REQUIRE_AUTH:-false}
+      API_KEY: ${API_KEY:-}
+
+      # Backup. Set BACKUP_BACKEND=github + credentials for an offsite mirror.
+      BACKUP_BACKEND: ${BACKUP_BACKEND:-none}
+      BACKUP_INTERVAL_MINUTES: ${BACKUP_INTERVAL_MINUTES:-30}
+      GITHUB_REPO_URL: ${GITHUB_REPO_URL:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+
+      # Storage paths -- match the mounted volume below; don't change.
+      STORAGE_PATH: /data/storage
+      WORKTREE_ROOT: /data/worktrees
+    volumes:
+      - diffmem_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:$${PORT:-8000}/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on: []                               # worker doesn't have to be up for the API to start
+
+  diffmem-worker:
+    build: ..
+    # image: ghcr.io/growth-kinetics/diffmem:latest
+    container_name: diffmem-worker
+    restart: unless-stopped
+    command: ["diffmem-worker"]                  # console script defined in pyproject.toml
+    environment:
+      # --- Required (same values as the API service) ---
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-}
+      RETRIEVAL_MODEL: ${RETRIEVAL_MODEL:-}
+
+      # Executor
+      EXECUTOR: hatchet
+      HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN:-}
+      HATCHET_NAMESPACE: ${HATCHET_NAMESPACE:-diffmem}
+      HATCHET_CLIENT_HOST_PORT: ${HATCHET_CLIENT_HOST_PORT:-}
+      HATCHET_CLIENT_TLS_STRATEGY: ${HATCHET_CLIENT_TLS_STRATEGY:-tls}
+      HATCHET_WORKER_SLOTS: ${HATCHET_WORKER_SLOTS:-10}
+
+      # Backup -- worker writes commits and needs the same backup config as the API
+      BACKUP_BACKEND: ${BACKUP_BACKEND:-none}
+      GITHUB_REPO_URL: ${GITHUB_REPO_URL:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+
+      # Storage paths -- SAME volume as the API
+      STORAGE_PATH: /data/storage
+      WORKTREE_ROOT: /data/worktrees
+    volumes:
+      - diffmem_data:/data                       # SAME named volume as the API service
+    # no ports -- worker is outbound-only to Hatchet Cloud
+
+volumes:
+  diffmem_data:
+    # Coolify auto-provisions this. On a bare docker host it lives at
+    # /var/lib/docker/volumes/diffmem_data/. Back it up; it's the source of truth.
