@@ -153,10 +153,21 @@ def test_factory_explicit_inline(monkeypatch, pool):
     assert isinstance(e, InlineExecutor)
 
 
-def test_factory_hatchet_raises_not_implemented(monkeypatch, pool):
+def test_factory_hatchet_raises_import_error_without_sdk(monkeypatch, pool):
+    """Without hatchet-sdk installed, factory raises ImportError with install hint."""
     monkeypatch.setenv("EXECUTOR", "hatchet")
-    with pytest.raises(NotImplementedError, match="pip install diffmem\\[hatchet\\]"):
-        build_executor(pool)
+    # Ensure hatchet_sdk is not importable in this test environment.
+    import sys
+    original = sys.modules.get("hatchet_sdk", "__missing__")
+    sys.modules["hatchet_sdk"] = None  # type: ignore[assignment]
+    try:
+        with pytest.raises(ImportError, match="pip install diffmem\\[hatchet\\]"):
+            build_executor(pool)
+    finally:
+        if original == "__missing__":
+            sys.modules.pop("hatchet_sdk", None)
+        else:
+            sys.modules["hatchet_sdk"] = original  # type: ignore[assignment]
 
 
 def test_factory_invalid_raises_valueerror(monkeypatch, pool):

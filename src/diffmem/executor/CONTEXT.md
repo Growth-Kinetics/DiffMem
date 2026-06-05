@@ -90,3 +90,42 @@ InlineExecutor internals:
 | Change job lifecycle types / to_dict() serialisation | `base.py` |
 | Change eviction policy or job store implementation | `jobstore.py` |
 | Understand the full capability contract | `base.py` (TaskExecutor ABC) |
+
+## Hatchet Backend (M3)
+
+**Status**: submit-side only (M3). Worker execution added in M4.
+
+### Required env vars
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `HATCHET_CLIENT_TOKEN` | Yes | — | Copy from Hatchet Cloud dashboard or self-hosted admin UI |
+| `HATCHET_NAMESPACE` | No | `diffmem` | Namespace scoping |
+| `HATCHET_CLIENT_HOST_PORT` | No | — | For self-hosted Hatchet (e.g. `engine.example.com:7077`) |
+| `HATCHET_CLIENT_TLS_STRATEGY` | No | `tls` | `tls` \| `mtls` \| `none` |
+
+### WritePayload / ConsolidatePayload contract
+The `work` thunk model used by InlineExecutor does not translate to Hatchet —
+worker processes have no access to Python closures. Instead, endpoints build
+a **structured payload** (`WritePayload` or `ConsolidatePayload`) alongside the
+thunk and pass both to `submit_*()`. The executor's choice which to use:
+- **InlineExecutor**: uses `work`, ignores `payload`.
+- **HatchetExecutor**: uses `payload`, ignores `work`.
+
+The payload dataclasses live in `base.py` and are exported from `__init__.py`:
+```python
+from diffmem.executor import WritePayload, ConsolidatePayload
+```
+
+### Workflow registration split
+| File | Responsibility |
+|---|---|
+| `hatchet_workflows.py` | Defines `WriteInput` / `ConsolidateInput` Pydantic models, `build_hatchet_client()`, `register_workflows()`. Importable by both API and worker. NO task handlers. |
+| `hatchet.py` | `HatchetExecutor`: submit-side. Calls `register_workflows()` on init, submits runs, queries status, waits for results. |
+| `hatchet_worker.py` (M4) | Worker process: attaches `@workflow.task()` handlers and calls `worker.start()`. |
+
+Per-user serialisation is handled by Hatchet's `ConcurrencyExpression(expression="input.user_id", max_runs=1)` — the second run for the same user queues until the first completes, even across worker restarts.
+
+### M3 is submit-side only
+Runs submitted with `EXECUTOR=hatchet` will be enqueued in Hatchet and stay in
+"queued" state until a worker is running. M4 adds `hatchet_worker.py` with the
+actual task handlers that reconstitute `DiffMemory` and execute the work.

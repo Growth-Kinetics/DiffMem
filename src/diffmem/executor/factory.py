@@ -42,10 +42,17 @@ def build_executor(pool: ThreadPoolExecutor) -> TaskExecutor:
         return InlineExecutor(pool)
 
     if value == "hatchet":
-        raise NotImplementedError(
-            "HatchetExecutor will be implemented in M3 of SESSION_SPEC_2026-06-05-001. "
-            "Install via: pip install diffmem[hatchet]"
-        )
+        try:
+            from .hatchet import HatchetExecutor  # noqa: PLC0415
+        except ImportError as e:
+            raise ImportError(
+                "HatchetExecutor requires the hatchet extras. "
+                "Run: pip install diffmem[hatchet] "
+                "(or `poetry install --extras hatchet`)"
+            ) from e
+        executor = HatchetExecutor(pool)
+        logger.info("EXECUTOR_INITIALIZED: type=hatchet")
+        return executor
 
     raise ValueError(
         f"Unknown EXECUTOR={value!r}. Expected: inline, hatchet."

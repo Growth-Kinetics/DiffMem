@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover
     import requests as _http_lib  # type: ignore[no-redef]
     _USE_HTTPX = False
 
-from .base import JobHandle, JobResult, JobStatus, TaskExecutor
+from .base import ConsolidatePayload, JobHandle, JobResult, JobStatus, TaskExecutor, WritePayload
 from .jobstore import JobStore
 
 logger = logging.getLogger(__name__)
@@ -128,17 +128,29 @@ class InlineExecutor(TaskExecutor):
     def submit_write(
         self,
         user_id: str,
-        work: Callable[[], dict],
+        work: Callable[[], dict] | None,
+        payload: WritePayload | None = None,
         callback_url: str | None = None,
     ) -> JobHandle:
+        if work is None:
+            raise ValueError(
+                "InlineExecutor requires the `work` thunk; "
+                "payload alone is not supported in inline mode."
+            )
         return self._submit("write", user_id, work, callback_url)
 
     def submit_consolidate(
         self,
         user_id: str,
-        work: Callable[[], dict],
+        work: Callable[[], dict] | None,
+        payload: ConsolidatePayload | None = None,
         callback_url: str | None = None,
     ) -> JobHandle:
+        if work is None:
+            raise ValueError(
+                "InlineExecutor requires the `work` thunk; "
+                "payload alone is not supported in inline mode."
+            )
         return self._submit("consolidate", user_id, work, callback_url)
 
     def get_job(self, job_id: str) -> JobResult | None:

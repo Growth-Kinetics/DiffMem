@@ -42,7 +42,7 @@ ALLOWED_ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "*")
 ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_RAW.split(",") if o.strip()]
 
 from .api import DiffMemory, onboard_new_user
-from .executor import TaskExecutor, build_executor
+from .executor import ConsolidatePayload, TaskExecutor, WritePayload, build_executor
 from .repo_manager import RepoManager
 from .retrieval_agent import command_router
 from .storage.factory import backup_interval_minutes
@@ -274,7 +274,8 @@ async def _submit_and_respond(
     executor: TaskExecutor,
     submit_fn: Callable,
     user_id: str,
-    work: Callable[[], dict],
+    work: Optional[Callable[[], dict]],
+    payload=None,
     callback_url: Optional[str],
     sync: Optional[bool],
     session_id: Optional[str] = None,
@@ -284,8 +285,14 @@ async def _submit_and_respond(
     Sync path: blocks in a thread pool (not the event loop) until the job completes,
     then returns the pre-M2 compatible response shape.
     Async path: returns job_id immediately; backup fires via the post-commit git hook.
+
+    Args:
+        work:    Thunk callable (required for InlineExecutor; ignored by HatchetExecutor).
+        payload: Structured WritePayload / ConsolidatePayload (required for HatchetExecutor;
+                 ignored by InlineExecutor).  Pass both when the executor type is not known
+                 at compile time.
     """
-    handle = submit_fn(user_id, work, callback_url=callback_url)
+    handle = submit_fn(user_id, work, payload=payload, callback_url=callback_url)
     effective_sync = (not executor.supports_async_api) if sync is None else sync
 
     if effective_sync:
@@ -510,11 +517,18 @@ async def process_session(
         memory.process_session(request.memory_input, request.session_id, request.session_date)
         return {"session_id": request.session_id, "message": "Session processed and staged for commit"}
 
+    payload = WritePayload(
+        user_id=user_id,
+        memory_input=request.memory_input,
+        session_id=request.session_id,
+        session_date=request.session_date,
+    )
     resp = await _submit_and_respond(
         executor=executor,
         submit_fn=executor.submit_write,
         user_id=user_id,
         work=work,
+        payload=payload,
         callback_url=request.callback_url,
         sync=sync,
         session_id=request.session_id,
@@ -541,11 +555,20 @@ async def commit_session(
         memory.commit_session(request.session_id)
         return {"session_id": request.session_id, "message": "Session committed"}
 
+    # commit-session has no memory_input; use empty string as placeholder for
+    # the Hatchet backend (the worker will use session_id to locate staged changes).
+    payload = WritePayload(
+        user_id=user_id,
+        memory_input="",
+        session_id=request.session_id,
+        session_date=None,
+    )
     resp = await _submit_and_respond(
         executor=executor,
         submit_fn=executor.submit_write,
         user_id=user_id,
         work=work,
+        payload=payload,
         callback_url=request.callback_url,
         sync=sync,
         session_id=request.session_id,
@@ -575,11 +598,18 @@ async def process_and_commit_session(
         memory.process_and_commit_session(request.memory_input, request.session_id, request.session_date)
         return {"session_id": request.session_id, "message": "Session processed and committed"}
 
+    payload = WritePayload(
+        user_id=user_id,
+        memory_input=request.memory_input,
+        session_id=request.session_id,
+        session_date=request.session_date,
+    )
     resp = await _submit_and_respond(
         executor=executor,
         submit_fn=executor.submit_write,
         user_id=user_id,
         work=work,
+        payload=payload,
         callback_url=request.callback_url,
         sync=sync,
         session_id=request.session_id,
@@ -623,11 +653,18 @@ async def consolidate(
         )
         return {"consolidate": result}
 
+    payload = ConsolidatePayload(
+        user_id=user_id,
+        tools=request.tools,
+        window=request.window,
+        soft_cap_tokens=request.soft_cap_tokens,
+    )
     resp = await _submit_and_respond(
         executor=executor,
         submit_fn=executor.submit_consolidate,
         user_id=user_id,
         work=work,
+        payload=payload,
         callback_url=request.callback_url,
         sync=sync,
     )
@@ -663,11 +700,21 @@ async def process_commit_and_consolidate(
         )
         return {"session_id": request.session_id, "consolidate": result.get("consolidate")}
 
+    payload = ConsolidatePayload(
+        user_id=user_id,
+        memory_input=request.memory_input,
+        session_id=request.session_id,
+        session_date=request.session_date,
+        tools=request.consolidate_tools,
+        window=request.window,
+        soft_cap_tokens=request.soft_cap_tokens,
+    )
     resp = await _submit_and_respond(
         executor=executor,
         submit_fn=executor.submit_consolidate,
         user_id=user_id,
         work=work,
+        payload=payload,
         callback_url=request.callback_url,
         sync=sync,
         session_id=request.session_id,
