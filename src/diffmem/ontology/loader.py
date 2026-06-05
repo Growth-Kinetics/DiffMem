@@ -13,9 +13,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Root of the ontologies/ directory shipped with the package
-_PACKAGE_ROOT = Path(__file__).parent.parent.parent.parent  # repo root
-_ONTOLOGIES_DIR = _PACKAGE_ROOT / "ontologies"
+# Locate the built-in ontologies/ directory.
+# Works in two layouts:
+#   dev/repo:     src/diffmem/ontology/loader.py  → 4x parent = repo root, ontologies/ lives there
+#   installed wheel: Poetry includes ontologies/ alongside the package; it lands at
+#                    <site-packages>/ontologies/ which is 2x parent from this file.
+# We try the repo-root layout first, then fall back to the package-adjacent layout.
+_LOADER_FILE = Path(__file__)                      # src/diffmem/ontology/loader.py
+_REPO_ROOT = _LOADER_FILE.parent.parent.parent.parent  # DiffMem/ (repo root, dev)
+
+_ONTOLOGIES_DIR = (
+    _REPO_ROOT / "ontologies" if (_REPO_ROOT / "ontologies").is_dir()
+    else _LOADER_FILE.parent.parent.parent / "ontologies"  # installed: site-packages/ontologies/
+)
 
 # Fallback prompts directory (writer_agent default prompts)
 _DEFAULT_PROMPTS_DIR = Path(__file__).parent.parent / "writer_agent" / "prompts"
