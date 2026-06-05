@@ -42,6 +42,7 @@ ALLOWED_ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "*")
 ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_RAW.split(",") if o.strip()]
 
 from .api import DiffMemory, onboard_new_user
+from .executor import build_executor
 from .repo_manager import RepoManager
 from .retrieval_agent import command_router
 from .storage.factory import backup_interval_minutes
@@ -210,6 +211,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("OPENROUTER_API_KEY env var is required.")
 
     repo_manager = RepoManager()
+    app.state.executor = build_executor(_writer_pool)
 
     # Post-commit hook is a best-effort webhook; enabling it costs nothing
     # if the backup backend is a no-op.
