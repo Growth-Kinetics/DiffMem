@@ -79,8 +79,10 @@ def run_worker() -> None:
     hatchet = build_hatchet_client()
     write_wf, consolidate_wf = register_workflows(hatchet)
 
+    # Use production handler names so HatchetExecutor's unwrap (which is keyed
+    # on these names) sees the same shape as in production.
     @write_wf.task(execution_timeout=timedelta(minutes=2), retries=0)
-    def smoke_write(input: WriteInput, ctx: Context) -> dict:
+    def process_and_commit(input: WriteInput, ctx: Context) -> dict:
         picked = time.monotonic()
         log.info(
             "WORKER_PICKED_UP_WRITE: user_id=%s session_id=%s run_id=%s",
@@ -103,7 +105,7 @@ def run_worker() -> None:
         }
 
     @consolidate_wf.task(execution_timeout=timedelta(minutes=2), retries=0)
-    def smoke_consolidate(input: ConsolidateInput, ctx: Context) -> dict:
+    def consolidate(input: ConsolidateInput, ctx: Context) -> dict:
         log.info("WORKER_PICKED_UP_CONSOLIDATE: user_id=%s run_id=%s", input.user_id, ctx.workflow_run_id)
         time.sleep(0.3)
         return {"ok": True, "kind": "consolidate", "user_id": input.user_id, "run_id": ctx.workflow_run_id}
@@ -171,25 +173,17 @@ def run_submitter() -> int:
         r_alice_1.status, r_alice_2.status, r_bob.status,
     )
 
-    # Assertions
-    # NOTE: Hatchet wraps task return values under the task function name.
-    # e.g. handler `smoke_write` returning {"ok": True} arrives as
-    # {"smoke_write": {"ok": True, ...}}.  Production code (HatchetExecutor) will
-    # see this same wrapping under the real handler names (`process_and_commit`,
-    # `consolidate`) — worth a follow-up issue.  For smoke purposes we unwrap.
-    def _unwrap(d: dict, task_name: str) -> dict:
-        if isinstance(d, dict) and task_name in d and isinstance(d[task_name], dict):
-            return d[task_name]
-        return d
-
+    # Assertions.  HatchetExecutor unwraps Hatchet's task-name wrapper for
+    # single-step workflows, so r.result is the handler's direct return value
+    # (matches InlineExecutor contract).  See ED-013 in .pi/DECISIONS.md.
     failures = []
     for label, r in [("alice_1", r_alice_1), ("alice_2", r_alice_2), ("bob", r_bob)]:
         if r.status != "completed":
             failures.append(f"{label} status={r.status} error={r.error!r}")
             continue
-        inner = _unwrap(r.result or {}, "smoke_write")
+        inner = r.result or {}
         if not inner.get("ok"):
-            failures.append(f"{label} result missing ok=True (raw={r.result!r}, unwrapped={inner!r})")
+            failures.append(f"{label} result missing ok=True: {r.result!r}")
 
     if failures:
         for f in failures:
@@ -202,12 +196,21 @@ def run_submitter() -> int:
     # FINDING: HatchetExecutor.JobResult.started_at is None (no signal from
     # submit-side process about worker pickup time).  We assert using worker-
     # side monotonic timestamps captured by the handler instead.
-    a1 = _unwrap(r_alice_1.result or {}, "smoke_write")
-    a2 = _unwrap(r_alice_2.result or {}, "smoke_write")
-    b  = _unwrap(r_bob.result or {}, "smoke_write")
+    a1 = r_alice_1.result or {}
+    a2 = r_alice_2.result or {}
+    b  = r_bob.result or {}
     a1p = a1.get("picked_up_at"); a1d = a1.get("done_at")
     a2p = a2.get("picked_up_at"); a2d = a2.get("done_at")
     bp  = b.get("picked_up_at");  bd  = b.get("done_at")
+
+    # Validate that HatchetExecutor populated started_at via _enrich_from_details.
+    # This is the post-fix-for-Finding-1 assertion.
+    if r_alice_1.started_at is None or r_bob.started_at is None:
+        log.error("FAIL: HatchetExecutor did not populate started_at (Finding 1 regression)")
+        log.error("  alice_1.started_at=%s bob.started_at=%s", r_alice_1.started_at, r_bob.started_at)
+        return 1
+    log.info("PASS_STARTED_AT_POPULATED: alice_1.started_at=%s bob.started_at=%s",
+             r_alice_1.started_at, r_bob.started_at)
 
     log.info("TIMING_WORKER: alice_1 picked=%.3f done=%.3f", a1p or 0, a1d or 0)
     log.info("TIMING_WORKER: alice_2 picked=%.3f done=%.3f", a2p or 0, a2d or 0)
@@ -248,7 +251,7 @@ def run_submitter() -> int:
     except TimeoutError:
         log.error("FAIL: consolidate timeout")
         return 1
-    c_inner = _unwrap(r_c.result or {}, "smoke_consolidate")
+    c_inner = r_c.result or {}
     if r_c.status != "completed" or not c_inner.get("ok"):
         log.error("FAIL: consolidate status=%s result=%s", r_c.status, r_c.result)
         return 1

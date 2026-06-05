@@ -300,3 +300,247 @@ def test_factory_hatchet_raises_clean_error_without_extras(monkeypatch, pool):
 
     with pytest.raises(ImportError, match="pip install diffmem\\[hatchet\\]"):
         factory_mod.build_executor(pool)
+
+
+# ---------------------------------------------------------------------------
+# Tests for Finding 1 (started_at enrichment) + Finding 2 (output unwrapping)
+# ---------------------------------------------------------------------------
+
+def test_unwrap_task_output_unwraps_known_workflow():
+    """_unwrap_task_output strips the task-name wrapper for known workflows."""
+    from diffmem.executor.hatchet import _unwrap_task_output
+
+    result = _unwrap_task_output(
+        "diffmem-write",
+        {"process_and_commit": {"ok": True, "session_id": "s1"}},
+    )
+    assert result == {"ok": True, "session_id": "s1"}
+
+    result = _unwrap_task_output(
+        "diffmem-consolidate",
+        {"consolidate": {"commits": 3}},
+    )
+    assert result == {"commits": 3}
+
+
+def test_unwrap_task_output_passthrough_on_unknown_workflow():
+    """Unknown workflow names pass through unchanged (no log)."""
+    from diffmem.executor.hatchet import _unwrap_task_output
+
+    wrapped = {"some_step": {"ok": True}}
+    assert _unwrap_task_output("unknown-workflow", wrapped) == wrapped
+
+
+def test_unwrap_task_output_passthrough_on_unexpected_shape(caplog):
+    """Known workflow but mismatched shape passes through + logs WARNING."""
+    from diffmem.executor.hatchet import _unwrap_task_output
+    import logging
+
+    caplog.set_level(logging.WARNING)
+    weird = {"wrong_key": {"ok": True}, "second_key": {"ok": False}}
+    assert _unwrap_task_output("diffmem-write", weird) == weird
+    assert any("HATCHET_OUTPUT_SHAPE_UNEXPECTED" in rec.message for rec in caplog.records)
+
+
+def test_unwrap_task_output_non_dict_passthrough():
+    """Non-dict inputs pass through unchanged (defensive)."""
+    from diffmem.executor.hatchet import _unwrap_task_output
+
+    assert _unwrap_task_output("diffmem-write", "not a dict") == "not a dict"
+    assert _unwrap_task_output("diffmem-write", None) is None
+    assert _unwrap_task_output("diffmem-write", 42) == 42
+
+
+def test_enrich_from_details_populates_started_and_completed(hatchet_executor):
+    """_enrich_from_details copies started_at + finished_at from Hatchet into JobResult."""
+    executor, client, workflow_obj, run_ref = hatchet_executor
+
+    # Seed jobstore with a job that has no started_at.
+    from diffmem.executor.base import JobResult
+    from datetime import datetime, timezone
+    job_id = "enrich-job-1"
+    submitted = datetime.now(timezone.utc)
+    executor._jobstore.put(JobResult(job_id=job_id, status="completed", submitted_at=submitted))
+    # Also register the workflow name so unwrap path can find it.
+    executor._refs[job_id] = (run_ref, "diffmem-write")
+
+    # Mock hatchet.runs.get to return a details object with started/finished/output.
+    started = datetime(2026, 6, 5, 12, 0, 0, tzinfo=timezone.utc)
+    finished = datetime(2026, 6, 5, 12, 0, 5, tzinfo=timezone.utc)
+    details_mock = MagicMock()
+    details_mock.run.started_at = started
+    details_mock.run.finished_at = finished
+    details_mock.run.output = {"process_and_commit": {"ok": True}}
+    client.runs.get.return_value = details_mock
+
+    executor._enrich_from_details(job_id, workflow_name="diffmem-write")
+
+    enriched = executor._jobstore.get(job_id)
+    assert enriched is not None
+    assert enriched.started_at == started
+    assert enriched.completed_at == finished
+    assert enriched.result == {"ok": True}, f"Expected unwrapped result; got {enriched.result!r}"
+
+
+def test_enrich_from_details_swallows_api_errors(hatchet_executor, caplog):
+    """Hatchet API errors during enrich are logged at WARNING and do not raise."""
+    import logging
+    executor, client, workflow_obj, run_ref = hatchet_executor
+    caplog.set_level(logging.WARNING)
+
+    # Seed jobstore.
+    from diffmem.executor.base import JobResult
+    from datetime import datetime, timezone
+    job_id = "enrich-err-job"
+    executor._jobstore.put(JobResult(job_id=job_id, status="completed", submitted_at=datetime.now(timezone.utc)))
+
+    client.runs.get.side_effect = ConnectionError("network down")
+
+    # Must NOT raise.
+    executor._enrich_from_details(job_id)
+
+    # Jobstore unchanged.
+    after = executor._jobstore.get(job_id)
+    assert after is not None
+    assert after.started_at is None
+    # WARNING log emitted.
+    assert any("HATCHET_DETAILS_ERROR" in rec.message for rec in caplog.records)
+
+
+def test_get_job_enriches_on_terminal_transition(hatchet_executor):
+    """get_job calls _enrich_from_details when status transitions to terminal."""
+    executor, client, workflow_obj, run_ref = hatchet_executor
+
+    from diffmem.executor.base import JobResult
+    from datetime import datetime, timezone
+    job_id = "terminal-job-1"
+    executor._jobstore.put(JobResult(job_id=job_id, status="queued", submitted_at=datetime.now(timezone.utc)))
+    executor._refs[job_id] = (run_ref, "diffmem-write")
+
+    # Hatchet says: completed.
+    mock_status = MagicMock()
+    mock_status.name = "COMPLETED"
+    client.runs.get_status.return_value = mock_status
+
+    # Hatchet details: full timestamps + wrapped output.
+    started = datetime(2026, 6, 5, 12, 0, 0, tzinfo=timezone.utc)
+    finished = datetime(2026, 6, 5, 12, 0, 5, tzinfo=timezone.utc)
+    details_mock = MagicMock()
+    details_mock.run.started_at = started
+    details_mock.run.finished_at = finished
+    details_mock.run.output = {"process_and_commit": {"ok": True, "session_id": "s9"}}
+    client.runs.get.return_value = details_mock
+
+    result = executor.get_job(job_id)
+    assert result is not None
+    assert result.status == "completed"
+    assert result.started_at == started
+    assert result.completed_at == finished
+    assert result.result == {"ok": True, "session_id": "s9"}
+    # The REST get was called exactly once (enrichment on terminal transition).
+    assert client.runs.get.call_count == 1
+
+
+def test_get_job_running_does_not_enrich(hatchet_executor):
+    """get_job does NOT call _enrich_from_details while still running."""
+    executor, client, workflow_obj, run_ref = hatchet_executor
+
+    from diffmem.executor.base import JobResult
+    from datetime import datetime, timezone
+    job_id = "running-job-1"
+    executor._jobstore.put(JobResult(job_id=job_id, status="queued", submitted_at=datetime.now(timezone.utc)))
+
+    mock_status = MagicMock()
+    mock_status.name = "RUNNING"
+    client.runs.get_status.return_value = mock_status
+
+    executor.get_job(job_id)
+    client.runs.get.assert_not_called()
+
+
+def test_wait_for_unwraps_and_enriches(hatchet_executor):
+    """wait_for unwraps single-step result + populates started_at from Hatchet."""
+    executor, client, workflow_obj, run_ref = hatchet_executor
+
+    # ref.result() returns the wrapped shape Hatchet produces.
+    run_ref.result.return_value = {"process_and_commit": {"ok": True, "session_id": "s7"}}
+
+    # _enrich_from_details will be called; provide started_at.
+    from datetime import datetime, timezone
+    started = datetime(2026, 6, 5, 14, 0, 0, tzinfo=timezone.utc)
+    details_mock = MagicMock()
+    details_mock.run.started_at = started
+    details_mock.run.finished_at = None  # finished_at set by wait_for itself
+    details_mock.run.output = {"process_and_commit": {"ok": True, "session_id": "s7"}}
+    client.runs.get.return_value = details_mock
+
+    from diffmem.executor.base import WritePayload
+    payload = WritePayload(user_id="dave", memory_input="x", session_id="s7")
+    handle = executor.submit_write("dave", None, payload=payload)
+
+    result = executor.wait_for(handle.job_id, timeout=5.0)
+    assert result.status == "completed"
+    assert result.result == {"ok": True, "session_id": "s7"}, (
+        f"Expected unwrapped result; got {result.result!r}"
+    )
+    assert result.started_at == started
+
+
+def test_wait_for_robust_to_enrich_failure(hatchet_executor):
+    """wait_for returns completed JobResult even if _enrich_from_details fails."""
+    executor, client, workflow_obj, run_ref = hatchet_executor
+
+    run_ref.result.return_value = {"process_and_commit": {"ok": True}}
+    client.runs.get.side_effect = ConnectionError("hatchet api unreachable")
+
+    from diffmem.executor.base import WritePayload
+    payload = WritePayload(user_id="eve", memory_input="y", session_id="s8")
+    handle = executor.submit_write("eve", None, payload=payload)
+
+    # Must not raise.
+    result = executor.wait_for(handle.job_id, timeout=5.0)
+    assert result.status == "completed"
+    assert result.result == {"ok": True}  # unwrap happened before enrich attempt
+    assert result.started_at is None  # enrich failed; degraded gracefully
+
+
+def test_enrich_skips_result_when_jobstore_already_has_one(hatchet_executor, caplog):
+    """Don't re-unwrap if wait_for already set the result (avoids noisy WARNINGs)."""
+    import logging
+    executor, client, workflow_obj, run_ref = hatchet_executor
+    caplog.set_level(logging.WARNING)
+
+    from diffmem.executor.base import JobResult
+    from datetime import datetime, timezone
+    job_id = "already-set-job"
+    submitted = datetime.now(timezone.utc)
+    # Pre-populate the jobstore with an unwrapped result (as wait_for would have).
+    executor._jobstore.put(JobResult(
+        job_id=job_id,
+        status="completed",
+        submitted_at=submitted,
+        result={"ok": True, "session_id": "s1"},
+    ))
+    executor._refs[job_id] = (run_ref, "diffmem-write")
+
+    # Hatchet returns a *raw* (potentially already-unwrapped) output that
+    # wouldn't match the wrapper shape — we should ignore it, not warn.
+    details_mock = MagicMock()
+    details_mock.run.started_at = datetime(2026, 6, 5, 10, 0, 0, tzinfo=timezone.utc)
+    details_mock.run.finished_at = datetime(2026, 6, 5, 10, 0, 5, tzinfo=timezone.utc)
+    details_mock.run.output = {"ok": True, "session_id": "s1"}  # already unwrapped
+    client.runs.get.return_value = details_mock
+
+    executor._enrich_from_details(job_id)
+
+    # No HATCHET_OUTPUT_SHAPE_UNEXPECTED warnings from this call.
+    shape_warnings = [r for r in caplog.records if "HATCHET_OUTPUT_SHAPE_UNEXPECTED" in r.message]
+    assert not shape_warnings, f"Expected no shape warnings, got: {[r.message for r in shape_warnings]}"
+
+    # Result preserved (not overwritten).
+    final = executor._jobstore.get(job_id)
+    assert final is not None
+    assert final.result == {"ok": True, "session_id": "s1"}
+    # Timestamps populated.
+    assert final.started_at is not None
+    assert final.completed_at is not None
