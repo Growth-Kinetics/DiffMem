@@ -159,4 +159,7 @@ class InlineExecutor(TaskExecutor):
 
     @property
     def supports_async_api(self) -> bool:
-        return True
+        # False: the default response mode is sync (block-until-done), which
+        # preserves the pre-M2 API contract for callers that don't pass ?sync.
+        # Pass ?sync=false explicitly to get async (queued) behaviour.
+        return False

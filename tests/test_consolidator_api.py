@@ -205,6 +205,11 @@ def _build_test_client(monkeypatch, tmp_path: Path, llm_call=None):
         return None
     monkeypatch.setattr(server_mod, "backup_user", noop_backup)
 
+    # Inject executor (bypasses lifespan which requires real env + RepoManager).
+    from concurrent.futures import ThreadPoolExecutor
+    from diffmem.executor.inline import InlineExecutor
+    server_mod.app.state.executor = InlineExecutor(ThreadPoolExecutor(max_workers=2))
+
     return TestClient(server_mod.app), wt
 
 
