@@ -62,3 +62,8 @@ diffmem-worker = "diffmem.executor.hatchet_worker:main"
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+markers = [
+    "hatchet_live: run only against a live Hatchet Cloud account (requires HATCHET_CLIENT_TOKEN env var)",
+]
