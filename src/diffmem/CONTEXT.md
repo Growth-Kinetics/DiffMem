@@ -20,7 +20,7 @@ in the git commit graph. No vector DB, no embeddings.
   → git worktree on `/data/worktrees/{user_id}`.
 - **Write turn (detailed):** `API endpoint → app.state.executor.submit_*()` →
   `InlineExecutor._run_job()` in `_writer_pool` (default) OR
-  `HatchetExecutor.run_workflow()` → Hatchet engine → `diffmem-worker` process →
+  `HatchetExecutor.submit_write()` → Hatchet engine queue → `diffmem-worker` process →
   `DiffMemory.process_and_commit_session()` → git worktree.
 
 ## Terminology

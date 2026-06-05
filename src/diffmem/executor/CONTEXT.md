@@ -154,6 +154,20 @@ from diffmem.executor import WritePayload, ConsolidatePayload
 
 Per-user serialisation is handled by Hatchet's `ConcurrencyExpression(expression="input.user_id", max_runs=1)` — the second run for the same user queues until the first completes, even across worker restarts.
 
+### JobResult shape symmetry (ED-013)
+
+Hatchet returns workflow outputs as `{<task_name>: <handler_return>}` because workflows can be multi-step. DiffMem's workflows are single-step, so `HatchetExecutor` strips the wrapper via `_unwrap_task_output()` to match `InlineExecutor`'s contract (the caller sees the handler's direct return value, no wrapper layer).
+
+`HatchetExecutor.JobResult.started_at` is populated lazily via `_enrich_from_details()`, which calls `hatchet.runs.get(run_id)` on transition to a terminal state. Only called once per job (cheap REST call); errors are logged at WARNING and swallowed (best-effort).
+
+**Cross-process contract:** the `_TASK_NAMES` dict in `hatchet.py` must stay in sync with the `@workflow.task()`-decorated function names in `hatchet_worker.py`. Currently:
+- `diffmem-write` → `process_and_commit`
+- `diffmem-consolidate` → `consolidate`
+
+Drift here silently disables the unwrap (the WARNING surfaces it, the executor still works — callers just see the wrapper layer).
+
+**REST vs ref.result() asymmetry:** Hatchet's `ref.result()` returns wrapped output; `hatchet.runs.get().run.output` returns *already unwrapped* output. `_unwrap_task_output()` accepts an `expect_wrapped` kwarg — `True` (default, used by `wait_for`) warns on shape mismatch; `False` (used by `_enrich_from_details`) is silent. See ED-013.
+
 ---
 
 ## Worker process
@@ -214,6 +228,25 @@ The worker requires the same env vars as the API process:
 `_memory_cache: dict[str, DiffMemory]` (protected by a `threading.Lock`).
 This mirrors the `memory_instances` dict in `server.py`: workers run for
 hours and we avoid reconstructing `RepoManager` / `DiffMemory` on every job.
+
+### Live validation notes
+
+The live smoke test at `scripts/smoke_hatchet_live.py` validates the per-user concurrency key against a real Hatchet engine. Run it before any production deployment:
+
+```bash
+source .env.hatchet-test  # or whatever env file has HATCHET_CLIENT_TOKEN
+EXECUTOR=hatchet PYTHONPATH=src python3 scripts/smoke_hatchet_live.py
+```
+
+The script spawns its own worker subprocess + submits 3 jobs (2 same-user, 1 different-user), asserts:
+- `alice_2` picked up AFTER `alice_1` completed (serialization)
+- `bob` picked up DURING `alice_1` (cross-user parallelism)
+- `JobResult.started_at` populated (ED-013)
+- `JobResult.result` is unwrapped (ED-013)
+
+Expected runtime: ~10 seconds. No LLM cost (dummy handlers).
+
+A full end-to-end test against real DiffMemory + LLM + git was run during PR #14 development against the tommy_demo transcripts; see TIMELINE 2026-06-05.
 
 ### Task handler notes
 

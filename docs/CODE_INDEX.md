@@ -44,8 +44,10 @@ docs/                    — Structural documentation
   CODE_INDEX.md          —   This file
   deployment.md          —   Docker / Coolify inline-mode deployment guide
   deployment-hatchet.md  —   Hetzner + Coolify + Hatchet Cloud production deployment guide
+  annabelle-migration.md —   Operator runbook for Annabelle's Railway→Hetzner+Hatchet cutover
 
-scripts/                 — Utility scripts (Docker healthcheck helpers, etc.)
+scripts/                 — Utility scripts
+  smoke_hatchet_live.py  —   Live Phase-1 smoke test against Hatchet Cloud (PR #14 ED-013 validation)
 tests/                   — Test suite
 Dockerfile               — Production container image (includes hatchet-sdk)
 docker-compose.yml       — Self-hosting entry point, inline executor (mounts /data volume)

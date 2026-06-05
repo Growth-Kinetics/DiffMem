@@ -180,6 +180,13 @@ The endpoints you'll actually use:
 - `POST /memory/{user_id}/onboard` — create a new user
 - `POST /memory/{user_id}/process-and-commit` — ingest a session transcript and commit
 - `POST /memory/{user_id}/context` — retrieve context for a conversation
+- `GET /memory/{user_id}/jobs/{job_id}` — poll a queued/running write or consolidate job
+
+Write endpoints accept `?sync=true|false` to override the default response mode and an
+optional `callback_url` in the body for webhook-style completion. Under `EXECUTOR=inline`
+(default) the default is synchronous (block-until-done; preserves pre-executor contract).
+Under `EXECUTOR=hatchet` the default is async (returns `{job_id, status}` in <500ms; poll
+the `/jobs/{job_id}` endpoint or supply `callback_url`).
 
 Example:
 
