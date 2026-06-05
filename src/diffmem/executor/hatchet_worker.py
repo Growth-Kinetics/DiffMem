@@ -28,12 +28,17 @@ Optional env vars:
   HATCHET_CLIENT_TLS_STRATEGY
 """
 
-from __future__ import annotations
+# NOTE: do NOT add `from __future__ import annotations` here.
+# Hatchet's @workflow.task() introspects handler annotations via
+# typing.get_type_hints() at decoration time; with PEP-563 lazy annotations
+# the input model class names (resolved from get_input_models()) would not be
+# in module globalns at that point and resolution would fail with NameError.
 
 import logging
 import os
 import threading
 import time
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -94,7 +99,7 @@ def _attach_write_handler(write_workflow) -> None:
 
     WriteInput, _ = get_input_models()
 
-    @write_workflow.task(execution_timeout="15m", retries=0)
+    @write_workflow.task(execution_timeout=timedelta(minutes=15), retries=0)
     def process_and_commit(input: WriteInput, ctx) -> dict:  # type: ignore[valid-type]
         run_id = getattr(ctx, "workflow_run_id", "unknown")
         logger.info(
@@ -159,7 +164,7 @@ def _attach_consolidate_handler(consolidate_workflow) -> None:
 
     _, ConsolidateInput = get_input_models()
 
-    @consolidate_workflow.task(execution_timeout="15m", retries=0)
+    @consolidate_workflow.task(execution_timeout=timedelta(minutes=15), retries=0)
     def consolidate(input: ConsolidateInput, ctx) -> dict:  # type: ignore[valid-type]
         run_id = getattr(ctx, "workflow_run_id", "unknown")
         logger.info(

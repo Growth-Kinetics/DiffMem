@@ -105,7 +105,7 @@ def test_worker_main_calls_start(worker_env, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_attach_write_handler_registers_task(worker_env):
-    """_attach_write_handler calls write_workflow.task(execution_timeout='15m', retries=0)."""
+    """_attach_write_handler calls write_workflow.task(execution_timeout=timedelta(minutes=15), retries=0)."""
     *_, worker_mod = worker_env
 
     write_workflow = MagicMock()
@@ -115,7 +115,8 @@ def test_attach_write_handler_registers_task(worker_env):
 
     worker_mod._attach_write_handler(write_workflow)
 
-    write_workflow.task.assert_called_once_with(execution_timeout="15m", retries=0)
+    from datetime import timedelta
+    write_workflow.task.assert_called_once_with(execution_timeout=timedelta(minutes=15), retries=0)
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +124,7 @@ def test_attach_write_handler_registers_task(worker_env):
 # ---------------------------------------------------------------------------
 
 def test_attach_consolidate_handler_registers_task(worker_env):
-    """_attach_consolidate_handler calls consolidate_workflow.task(execution_timeout='15m', retries=0)."""
+    """_attach_consolidate_handler calls consolidate_workflow.task(execution_timeout=timedelta(minutes=15), retries=0)."""
     *_, worker_mod = worker_env
 
     consolidate_workflow = MagicMock()
@@ -132,7 +133,8 @@ def test_attach_consolidate_handler_registers_task(worker_env):
 
     worker_mod._attach_consolidate_handler(consolidate_workflow)
 
-    consolidate_workflow.task.assert_called_once_with(execution_timeout="15m", retries=0)
+    from datetime import timedelta
+    consolidate_workflow.task.assert_called_once_with(execution_timeout=timedelta(minutes=15), retries=0)
 
 
 # ---------------------------------------------------------------------------
