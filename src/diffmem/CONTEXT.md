@@ -42,29 +42,35 @@ in the git commit graph. No vector DB, no embeddings.
   `started_at`, `completed_at`. Stored in `JobStore` (inline) or Hatchet (hatchet mode).
 - **`EXECUTOR` env var:** Selects the executor backend at startup. `inline` (default) or
   `hatchet`. Read by `executor/factory.py`.
+- **OntologyProfile:** Resolved once at server startup from `DIFFMEM_ONTOLOGY` env var.
+  Defines entity types, folder map, contexts folder, and prompt overrides. Propagated
+  to every `DiffMemory`, `WriterAgent`, `OnboardingAgent`, `ConsolidatorAgent`, and
+  `run_retrieval_agent()` call. Built-ins: `personal` (default), `corporate`.
+- **`DIFFMEM_ONTOLOGY` env var:** Selects the active ontology at startup. Built-in name
+  (e.g. `personal`, `corporate`) or absolute path to a custom ontology directory.
+  Read by `ontology/factory.py` → `load_ontology()`. Unknown name raises at startup.
 
 ## Key Files
 - `server.py` — FastAPI app, all HTTP endpoints, `_writer_pool` thread pool, lifespan.
-- `api.py` — `DiffMemory` class: public Python API, delegates to writer/retrieval agents.
+  Loads ontology at startup (`app.state.ontology`); passes it to every `DiffMemory` instance.
+- `api.py` — `DiffMemory` class: public Python API, delegates to writer/retrieval/consolidator.
+  Loads `OntologyProfile` once in `__init__`; propagates to all sub-agents.
 - `repo_manager.py` — Worktree mount/unmount, `list_active_users()`, post-commit hook install.
 - `writer_agent/agent.py` — Multi-step LLM pipeline: identifies entities → stages git changes
-  → commits. Uses `ThreadPoolExecutor` internally for parallel LLM calls.
-- `retrieval_agent/agent.py` — Multi-turn agent with sandboxed shell tool. Explores repo and
-  returns a structured retrieval plan.
+  → commits. Ontology-driven scanning via `_entity_md_files()`.
+- `retrieval_agent/agent.py` — Multi-turn agent with sandboxed shell tool. System prompt
+  folder listing rendered from ontology at call time.
 - `storage/factory.py` — Pluggable storage/backup backend factory.
 - `consolidator_agent/agent.py` — `ConsolidatorAgent`: out-of-band repair pass
-  with three tools (`run_dedupe`, `run_redistribute`, `run_link`). Produces
-  `consolidate(...)`-prefixed commits.
-- `executor/factory.py` — `build_executor(pool)`: reads `EXECUTOR` env var, constructs and
-  returns the correct backend (`InlineExecutor` or `HatchetExecutor`).
-- `executor/inline.py` — `InlineExecutor`: default backend; wraps `_writer_pool`; per-user
-  `threading.Lock` for write serialization.
-- `executor/hatchet.py` — `HatchetExecutor`: opt-in backend; submits runs to the Hatchet
-  workflow engine; polls status via Hatchet API.
-- `executor/hatchet_workflows.py` — Workflow registrations (`WriteInput`, `ConsolidateInput`
-  Pydantic models, `register_workflows()`). Shared between API process and worker process.
-- `executor/hatchet_worker.py` — Long-running worker process: attaches `@workflow.task()`
-  handlers, calls `worker.start()`. Consumed by the `diffmem-worker` console script.
+  with three tools (`run_dedupe`, `run_redistribute`, `run_link`). Ontology-aware
+  entity scanning and index rebuilding.
+- `ontology/loader.py` — `load_ontology()` + `OntologyProfile` dataclass. Central
+  resolution point for all ontology concerns. Built-ins in `ontologies/`.
+- `executor/factory.py` — `build_executor(pool)`: reads `EXECUTOR` env var.
+- `executor/inline.py` — `InlineExecutor`: default backend; per-user `threading.Lock`.
+- `executor/hatchet.py` — `HatchetExecutor`: opt-in backend; Hatchet workflow engine.
+- `executor/hatchet_workflows.py` — Workflow registrations shared by API + worker.
+- `executor/hatchet_worker.py` — Long-running worker process (`diffmem-worker` script).
 
 ## External Dependencies
 - **OpenRouter** — all LLM calls (writer, onboarding, retrieval agents). Model configured

@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![Production](https://img.shields.io/badge/status-production-brightgreen.svg)](https://github.com/Growth-Kinetics/DiffMem)
-[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](https://github.com/Growth-Kinetics/DiffMem)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue.svg)](https://github.com/Growth-Kinetics/DiffMem)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Growth-Kinetics/DiffMem)
 
 DiffMem is a lightweight, git-based memory backend for AI agents and conversational systems. It uses Markdown files for human-readable storage, Git for tracking temporal evolution through differentials, and a git-native retrieval agent that explores the repository via shell commands (`grep`, `git log`, `git diff`, `git blame`) to build targeted context. No vector databases, no embeddings, no BM25 — just git and an LLM.
@@ -290,6 +290,7 @@ See `repo_guide.md` in the repo root for the full memory schema (this file is co
 
 DiffMem is production software. It runs Annabelle's memory across thousands of conversations and has been through several iterations of hardening:
 
+- **v0.5** — pluggable ontologies via `DIFFMEM_ONTOLOGY` env var. Two built-in profiles (`personal`, `corporate`); custom ontologies via absolute path; community contribution path in `ontologies/`. All agent scanning (writer, consolidator, retrieval) is now ontology-aware.
 - **v0.4** — pluggable task executor (inline thread pool or Hatchet for durable/observable execution), per-user write serialization enforced server-side, out-of-band consolidation tools (dedupe, redistribute, link), bidirectional GitHub sync.
 - **v0.3** — retrieval agent with sandboxed shell commands, git-native temporal reasoning, fallback to baseline on agent failure.
 - **v0.2** — async write pipeline, thread pool to keep the event loop free, Railway/Docker hardening.

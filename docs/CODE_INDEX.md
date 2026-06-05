@@ -32,8 +32,14 @@ src/diffmem/             — Core package (importable as a library or run as a s
     base.py              —   Abstract base classes; BackupBackend defines pull_user() contract
 
   ontology/              — Ontology profile loader (DIFFMEM_ONTOLOGY env var)
-    loader.py            —   OntologyProfile dataclass + load_ontology(); raises ValueError on unknown name
+    loader.py            —   OntologyProfile dataclass + load_ontology(); entity_dirs(), contexts_folder(),
+                             resolve_prompt() fallback chain; raises ValueError on unknown name
+    CONTEXT.md           —   Capability context
     __init__.py
+  ontologies/            — Built-in ontology profiles (co-located with package for pip install)
+    personal/            —   Default: memories/people, memories/contexts, memories/events
+    corporate/           —   CRM: entities/people, projects, decisions, commitments, external
+    README.md            —   schema.json contract + OSS contribution guide
 
   executor/              — Pluggable task executor; backend chosen via EXECUTOR env var
     base.py              —   TaskExecutor ABC, JobStatus/JobHandle/JobResult, WritePayload/ConsolidatePayload
@@ -44,15 +50,10 @@ src/diffmem/             — Core package (importable as a library or run as a s
     hatchet_worker.py    —   Worker process: @workflow.task() handlers + worker.start() loop
     factory.py           —   build_executor(pool): reads EXECUTOR env var, returns correct impl
 
-ontologies/              — Pluggable entity taxonomy profiles (DIFFMEM_ONTOLOGY env var)
-  personal/              —   Default profile: people / contexts / events (Annabelle / personal AI)
-    schema.json          —     Entity types, folder map, index_type vocabulary
-    repo_guide.md        —     Schema reference copied into each user worktree at onboard
-  corporate/             —   Tommy's 5-entity CRM profile: people / projects / decisions / commitments / external
-    schema.json
-    repo_guide.md
-    prompts/             —     Overridden prompts (1_identify_entities, 2_create_entity_file, etc.)
-  README.md              —   How to pick a profile, write a custom ontology, contribute to OSS
+ontologies/              — Human-browsable mirrors of src/diffmem/ontologies/ (kept in sync; see README)
+  personal/              —   Mirror of personal profile
+  corporate/             —   Mirror of corporate profile
+  README.md              —   Sync note + contribution guide (canonical copy)
 
 docs/                    — Structural documentation
   CODE_INDEX.md          —   This file
