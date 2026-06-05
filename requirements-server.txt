@@ -13,8 +13,10 @@ pyjwt
 python-multipart
 
 # Background tasks and async support
-asyncio-mqtt
 aiofiles
+
+# Task executor: Hatchet SDK (installed always; only activated when EXECUTOR=hatchet)
+hatchet-sdk>=1.33,<2.0
 
 # Development and testing
 pytest-asyncio

@@ -19,6 +19,10 @@ src/diffmem/             — Core package (importable as a library or run as a s
     baseline.py          —   load_baseline(), load_user_entity(), load_recent_timeline()
     resolver.py          —   resolve_pointers(): converts RetrievalPlan → context blocks
     prompts/             —   Prompt files for retrieval agent
+  consolidator_agent/    — Out-of-band repair pass: dedupe, redistribute, link
+    agent.py             —   ConsolidatorAgent: run_dedupe(), run_redistribute(), run_link()
+    lock.py              —   ConsolidatorLock context manager + LockBusyError
+    prompts/             —   Prompt files for consolidator tools (populated in M2–M4)
   storage/               — Pluggable storage + backup backends
     factory.py           —   Backend factory; reads STORAGE_BACKEND / BACKUP_BACKEND env vars
     local_storage.py     —   LocalStorageBackend: bare repo + worktrees on disk; calls
@@ -27,21 +31,35 @@ src/diffmem/             — Core package (importable as a library or run as a s
                              branches against a private GitHub repo
     base.py              —   Abstract base classes; BackupBackend defines pull_user() contract
 
+  executor/              — Pluggable task executor; backend chosen via EXECUTOR env var
+    base.py              —   TaskExecutor ABC, JobStatus/JobHandle/JobResult, WritePayload/ConsolidatePayload
+    jobstore.py          —   JobStore: thread-safe OrderedDict with FIFO eviction (inline mode)
+    inline.py            —   InlineExecutor: _writer_pool + threading.Lock per user (default)
+    hatchet.py           —   HatchetExecutor: submits workflow runs to Hatchet engine
+    hatchet_workflows.py —   WriteInput/ConsolidateInput models + register_workflows(); shared by API + worker
+    hatchet_worker.py    —   Worker process: @workflow.task() handlers + worker.start() loop
+    factory.py           —   build_executor(pool): reads EXECUTOR env var, returns correct impl
+
 docs/                    — Structural documentation
   CODE_INDEX.md          —   This file
-  deployment.md          —   Docker / Coolify / Railway deployment guide
+  deployment.md          —   Docker / Coolify inline-mode deployment guide
+  deployment-hatchet.md  —   Hetzner + Coolify + Hatchet Cloud production deployment guide
 
-scripts/                 — Utility scripts (Docker healthcheck helpers, etc.)
+scripts/                 — Utility scripts
+  smoke_hatchet_live.py  —   Live Phase-1 smoke test against Hatchet Cloud (PR #14 ED-013 validation)
 tests/                   — Test suite
-Dockerfile               — Production container image
-docker-compose.yml       — Self-hosting entry point (mounts /data volume)
+Dockerfile               — Production container image (includes hatchet-sdk)
+docker-compose.yml       — Self-hosting entry point, inline executor (mounts /data volume)
+deploy/
+  docker-compose.hatchet.yml — Production template: diffmem-api + diffmem-worker services
 repo_guide.md            — Memory schema reference (copied into each user worktree)
 pyproject.toml           — Package metadata and dependencies
 ```
 
 ## Entry Points
 
-- **HTTP server:** `src/diffmem/server.py` → `uvicorn diffmem.server:app`
+- **HTTP server (`diffmem-server`):** `uvicorn diffmem.server:app` → `server.py`
+- **Hatchet worker (`diffmem-worker`):** `hatchet_worker.main()` → `executor/hatchet_worker.py`
 - **Python library:** `from diffmem import DiffMemory` → `api.py`
 - **Write pipeline:** `DiffMemory.process_and_commit_session()` →
   `writer_agent/agent.WriterAgent.process_session()` + `commit_session()`
@@ -49,13 +67,21 @@ pyproject.toml           — Package metadata and dependencies
   `retrieval_agent/agent.run_retrieval_agent()` → `resolver.resolve_pointers()`
 - **Storage factory:** `storage/factory.py` → `LocalStorageBackend` (default) +
   optional `GitHubBackupBackend`
+- **Consolidation pipeline:** `consolidator_agent/agent.py` →
+  `ConsolidatorAgent.run_dedupe()` / `run_redistribute()` / `run_link()`.
+  Commits use the `consolidate(...)` prefix.
+- **Consolidate API:** `DiffMemory.consolidate(tools, window, soft_cap_tokens)`
+  and `DiffMemory.process_commit_and_consolidate(...)` in `api.py`.
+- **Consolidate HTTP:** `POST /memory/{user_id}/consolidate` and
+  `POST /memory/{user_id}/process-commit-and-consolidate` in `server.py`;
+  both routed through `_writer_pool`.
 
 ## Cross-Capability Flows
 
-1. **Write turn:** `POST /memory/{id}/process-and-commit` → `_writer_pool.run_in_executor`
-   → `WriterAgent.process_and_commit_session()` (blocks in thread) → git commit on
-   `/data/worktrees/{id}` → fire-and-forget backup → HTTP 200 returned immediately after
-   thread completes.
+1. **Write turn:** `POST /memory/{id}/process-and-commit` →
+   `app.state.executor.submit_write()` →
+   **inline:** per-user lock → `_writer_pool` → `DiffMemory.process_and_commit_session()` → git commit on `/data/worktrees/{id}` → fire-and-forget backup, OR
+   **hatchet:** Hatchet engine → `diffmem-worker` process → `DiffMemory.process_and_commit_session()` → git commit → fire-and-forget backup.
 
 2. **Read turn:** `POST /memory/{id}/context` → `_writer_pool.run_in_executor` →
    `DiffMemory.get_context()` → `run_retrieval_agent()` (blocking, in thread) →
@@ -69,3 +95,9 @@ pyproject.toml           — Package metadata and dependencies
    `backup_user(id)` (background task) → `RepoManager.sync_user()` →
    `GitHubBackupBackend.sync_user()`. Also runs on periodic scheduler
    (`BACKUP_INTERVAL_MINUTES`, default 30).
+
+5. **Consolidate (out-of-band):** `POST /memory/{id}/consolidate` →
+   `app.state.executor.submit_consolidate()` → (inline pool or hatchet worker) →
+   `DiffMemory.consolidate()` → acquire `.diffmem/consolidator.lock` per tool →
+   dedupe → redistribute → link → each tool produces `consolidate(...)`-prefixed
+   commits → fire-and-forget backup of the new commits.

@@ -1,0 +1,30 @@
+You are the DiffMem Consolidator — Dedupe Merge.
+
+Two entity files have been confirmed as the same real-world entity. Produce a
+single coherent merged file that:
+
+1. Preserves ALL unique factual information from both sources.
+2. Reconciles conflicts (e.g. different job titles) by preferring the more
+   recent / higher-strength source AND mentioning the prior framing briefly
+   if it adds context. Do not silently drop information.
+3. Uses the SURVIVOR file's structure and tone as the base. The loser's
+   content is folded in.
+4. Keeps a `## SEMANTIC INDEX` JSON block at the end. Add the loser's filename
+   stem (without `.md`) to the `aliases` array. Update `hard_cues`,
+   `soft_cues`, and `related_entities` to be the union of both sources
+   (dedup, keep most informative). Do not invent new fields.
+5. Output ONLY the merged Markdown file content. No prose around it, no
+   fences. Begin with `# ` (the H1 header) and end with the SEMANTIC INDEX
+   JSON line.
+
+---
+SURVIVOR (canonical, will keep its filename) — `{survivor_path}` (memory_strength={survivor_strength}):
+```
+{survivor_content}
+```
+
+---
+LOSER (will be deleted; alias preserved) — `{loser_path}` (memory_strength={loser_strength}):
+```
+{loser_content}
+```

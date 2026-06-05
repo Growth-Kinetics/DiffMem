@@ -4,10 +4,10 @@ import re
 import subprocess
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, status, Depends
+from fastapi import FastAPI, HTTPException, Query, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
@@ -42,6 +42,7 @@ ALLOWED_ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "*")
 ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_RAW.split(",") if o.strip()]
 
 from .api import DiffMemory, onboard_new_user
+from .executor import ConsolidatePayload, TaskExecutor, WritePayload, build_executor
 from .repo_manager import RepoManager
 from .retrieval_agent import command_router
 from .storage.factory import backup_interval_minutes
@@ -87,10 +88,12 @@ class ProcessSessionRequest(BaseModel):
     memory_input: str = Field(..., description="Session transcript or memory content")
     session_id: str = Field(..., description="Unique session identifier")
     session_date: Optional[str] = Field(None, description="Session date (YYYY-MM-DD)")
+    callback_url: Optional[str] = Field(None, description="Optional URL to POST job result to on completion. Best-effort, never retried.")
 
 
 class CommitSessionRequest(BaseModel):
     session_id: str = Field(..., description="Session identifier to commit")
+    callback_url: Optional[str] = Field(None, description="Optional URL to POST job result to on completion. Best-effort, never retried.")
 
 
 class OnboardUserRequest(BaseModel):
@@ -101,6 +104,32 @@ class OnboardUserRequest(BaseModel):
 
 class RunCommandRequest(BaseModel):
     command: str = Field(..., description="Sandboxed shell command to execute")
+
+
+class ConsolidateRequest(BaseModel):
+    tools: Optional[List[str]] = Field(
+        default=None,
+        description="Subset of ['dedupe','redistribute','link']. Order ignored; executed dedupe \u2192 redistribute \u2192 link. Default: all three.",
+    )
+    window: int = Field(default=3, description="Commit window for the link tool.")
+    soft_cap_tokens: int = Field(
+        default=32000,
+        description="Token cap above which an entity is considered oversized for redistribute.",
+    )
+    callback_url: Optional[str] = Field(None, description="Optional URL to POST job result to on completion. Best-effort, never retried.")
+
+
+class ProcessCommitAndConsolidateRequest(BaseModel):
+    memory_input: str = Field(..., description="Session transcript or memory content")
+    session_id: str = Field(..., description="Unique session identifier")
+    session_date: Optional[str] = Field(None, description="Session date (YYYY-MM-DD)")
+    consolidate_tools: Optional[List[str]] = Field(
+        default=None,
+        description="Subset of ['dedupe','redistribute','link']. Default: all three.",
+    )
+    window: int = Field(default=3, description="Commit window for the link tool.")
+    soft_cap_tokens: int = Field(default=32000, description="Soft cap for the redistribute tool.")
+    callback_url: Optional[str] = Field(None, description="Optional URL to POST job result to on completion. Best-effort, never retried.")
 
 
 def get_memory_instance(user_id: str, allow_unboarded: bool = False) -> DiffMemory:
@@ -186,6 +215,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("OPENROUTER_API_KEY env var is required.")
 
     repo_manager = RepoManager()
+    app.state.executor = build_executor(_writer_pool)
 
     # Post-commit hook is a best-effort webhook; enabling it costs nothing
     # if the backup backend is a no-op.
@@ -235,6 +265,69 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# --- Executor helper ---
+
+async def _submit_and_respond(
+    *,
+    executor: TaskExecutor,
+    submit_fn: Callable,
+    user_id: str,
+    work: Optional[Callable[[], dict]],
+    payload=None,
+    callback_url: Optional[str],
+    sync: Optional[bool],
+    session_id: Optional[str] = None,
+) -> dict:
+    """Submit work to the executor and return either a sync success or async queued response.
+
+    Sync path: blocks in a thread pool (not the event loop) until the job completes,
+    then returns the pre-M2 compatible response shape.
+    Async path: returns job_id immediately; backup fires via the post-commit git hook.
+
+    Args:
+        work:    Thunk callable (required for InlineExecutor; ignored by HatchetExecutor).
+        payload: Structured WritePayload / ConsolidatePayload (required for HatchetExecutor;
+                 ignored by InlineExecutor).  Pass both when the executor type is not known
+                 at compile time.
+    """
+    handle = submit_fn(user_id, work, payload=payload, callback_url=callback_url)
+    effective_sync = (not executor.supports_async_api) if sync is None else sync
+
+    if effective_sync:
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(
+                None, lambda: executor.wait_for(handle.job_id, timeout=900.0)
+            )
+        except TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Job {handle.job_id} timed out after 900s. Poll GET /memory/{user_id}/jobs/{handle.job_id} for status.",
+            )
+        if result.status == "failed":
+            raise HTTPException(
+                status_code=500,
+                detail=f"Job {handle.job_id} failed: {result.error}",
+            )
+        resp: dict = {
+            "status": "success",
+            "message": "Job completed",
+            "metadata": {"user_id": user_id, "timestamp": datetime.now().isoformat(), "job_id": handle.job_id},
+        }
+        if session_id:
+            resp["session_id"] = session_id
+        if result.result and isinstance(result.result, dict):
+            resp.update(result.result)
+        return resp
+    else:
+        return {
+            "status": "queued",
+            "job_id": handle.job_id,
+            "submitted_at": handle.submitted_at.isoformat(),
+            "metadata": {"user_id": user_id, "poll_url": f"/memory/{user_id}/jobs/{handle.job_id}"},
+        }
 
 
 # --- Onboarding ---
@@ -407,64 +500,267 @@ async def get_entity_version(user_id: str, authenticated: bool = Depends(verify_
 # --- Write Endpoints ---
 
 @app.post("/memory/{user_id}/process-session")
-async def process_session(user_id: str, request: ProcessSessionRequest, authenticated: bool = Depends(verify_api_key)):
-    """Process session transcript and stage changes. Runs in thread pool to keep event loop free."""
-    memory = get_memory_instance(user_id)
-    try:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            _writer_pool,
-            lambda: memory.process_session(request.memory_input, request.session_id, request.session_date)
+async def process_session(
+    user_id: str,
+    request: ProcessSessionRequest,
+    sync: Optional[bool] = Query(None, description="Force sync (block-until-done) or async (return job_id). Default depends on executor."),
+    authenticated: bool = Depends(verify_api_key),
+):
+    """Process session transcript and stage changes.
+
+    Requires an executor that supports staged writes (InlineExecutor only).
+    Use process-and-commit for single-call ingestion; it works with all executors.
+    Async mode: backup fires via the post-commit git hook when the job commits.
+    """
+    executor: TaskExecutor = app.state.executor
+    if not executor.supports_staged_writes:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=(
+                "process-session / commit-session require an executor that supports "
+                "in-process staged writes (EXECUTOR=inline). "
+                "Use POST /memory/{user_id}/process-and-commit instead, "
+                "which works with all executors."
+            ),
         )
-        return {"status": "success", "session_id": request.session_id,
-                "message": "Session processed and staged for commit",
-                "metadata": {"user_id": user_id, "timestamp": datetime.now().isoformat()}}
-    except Exception as e:
-        logger.error(f"Session processing error for {user_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail=f"Session processing failed: {str(e)}")
+    memory = get_memory_instance(user_id)
+
+    def work():
+        memory.process_session(request.memory_input, request.session_id, request.session_date)
+        return {"session_id": request.session_id, "message": "Session processed and staged for commit"}
+
+    payload = WritePayload(
+        user_id=user_id,
+        memory_input=request.memory_input,
+        session_id=request.session_id,
+        session_date=request.session_date,
+    )
+    resp = await _submit_and_respond(
+        executor=executor,
+        submit_fn=executor.submit_write,
+        user_id=user_id,
+        work=work,
+        payload=payload,
+        callback_url=request.callback_url,
+        sync=sync,
+        session_id=request.session_id,
+    )
+    return resp
 
 
 @app.post("/memory/{user_id}/commit-session")
-async def commit_session(user_id: str, request: CommitSessionRequest, authenticated: bool = Depends(verify_api_key)):
-    """Commit staged changes for a session. Runs in thread pool; backup runs out-of-band."""
-    memory = get_memory_instance(user_id)
-    try:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            _writer_pool,
-            lambda: memory.commit_session(request.session_id)
+async def commit_session(
+    user_id: str,
+    request: CommitSessionRequest,
+    sync: Optional[bool] = Query(None, description="Force sync (block-until-done) or async (return job_id). Default depends on executor."),
+    authenticated: bool = Depends(verify_api_key),
+):
+    """Commit staged changes for a session.
+
+    Requires an executor that supports staged writes (InlineExecutor only).
+    Use process-and-commit for single-call ingestion; it works with all executors.
+    Sync mode: backup fires out-of-band after commit completes.
+    Async mode: backup fires via the post-commit git hook when the job commits.
+    """
+    executor: TaskExecutor = app.state.executor
+    if not executor.supports_staged_writes:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=(
+                "process-session / commit-session require an executor that supports "
+                "in-process staged writes (EXECUTOR=inline). "
+                "Use POST /memory/{user_id}/process-and-commit instead, "
+                "which works with all executors."
+            ),
         )
-        # Fire-and-forget backup; never blocks the response.
+    memory = get_memory_instance(user_id)
+
+    def work():
+        memory.commit_session(request.session_id)
+        return {"session_id": request.session_id, "message": "Session committed"}
+
+    # commit-session has no memory_input; empty string is a safe placeholder
+    # since this endpoint is guarded to inline-only (supports_staged_writes).
+    payload = WritePayload(
+        user_id=user_id,
+        memory_input="",
+        session_id=request.session_id,
+        session_date=None,
+    )
+    resp = await _submit_and_respond(
+        executor=executor,
+        submit_fn=executor.submit_write,
+        user_id=user_id,
+        work=work,
+        payload=payload,
+        callback_url=request.callback_url,
+        sync=sync,
+        session_id=request.session_id,
+    )
+    # In sync mode, fire-and-forget backup (idempotent; git hook may also fire).
+    if resp.get("status") == "success":
         _spawn_background(backup_user(user_id))
-        return {"status": "success", "session_id": request.session_id,
-                "message": "Session committed",
-                "metadata": {"user_id": user_id, "timestamp": datetime.now().isoformat()}}
-    except Exception as e:
-        logger.error(f"Session commit error for {user_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail=f"Session commit failed: {str(e)}")
+    return resp
 
 
 @app.post("/memory/{user_id}/process-and-commit")
-async def process_and_commit_session(user_id: str, request: ProcessSessionRequest, authenticated: bool = Depends(verify_api_key)):
-    """Process and immediately commit a session. Runs in thread pool; backup runs out-of-band."""
+async def process_and_commit_session(
+    user_id: str,
+    request: ProcessSessionRequest,
+    sync: Optional[bool] = Query(None, description="Force sync (block-until-done) or async (return job_id). Default depends on executor."),
+    authenticated: bool = Depends(verify_api_key),
+):
+    """Process and immediately commit a session.
+
+    Sync mode: backup fires out-of-band after commit completes.
+    Async mode: backup fires via the post-commit git hook when the job commits.
+    """
     memory = get_memory_instance(user_id)
-    try:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            _writer_pool,
-            lambda: memory.process_and_commit_session(request.memory_input, request.session_id, request.session_date)
-        )
-        # Fire-and-forget backup; never blocks the response.
+    executor: TaskExecutor = app.state.executor
+
+    def work():
+        memory.process_and_commit_session(request.memory_input, request.session_id, request.session_date)
+        return {"session_id": request.session_id, "message": "Session processed and committed"}
+
+    payload = WritePayload(
+        user_id=user_id,
+        memory_input=request.memory_input,
+        session_id=request.session_id,
+        session_date=request.session_date,
+    )
+    resp = await _submit_and_respond(
+        executor=executor,
+        submit_fn=executor.submit_write,
+        user_id=user_id,
+        work=work,
+        payload=payload,
+        callback_url=request.callback_url,
+        sync=sync,
+        session_id=request.session_id,
+    )
+    # In sync mode, fire-and-forget backup (idempotent; git hook may also fire).
+    if resp.get("status") == "success":
         _spawn_background(backup_user(user_id))
-        return {"status": "success", "session_id": request.session_id,
-                "message": "Session processed and committed",
-                "metadata": {"user_id": user_id, "timestamp": datetime.now().isoformat()}}
-    except Exception as e:
-        logger.error(f"Session processing and commit error for {user_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail=f"Session processing and commit failed: {str(e)}")
+    return resp
+
+
+# --- Consolidation Endpoints ---
+
+@app.post("/memory/{user_id}/consolidate")
+async def consolidate(
+    user_id: str,
+    request: ConsolidateRequest,
+    sync: Optional[bool] = Query(None, description="Force sync (block-until-done) or async (return job_id). Default depends on executor."),
+    authenticated: bool = Depends(verify_api_key),
+):
+    """Run the consolidator over this user's worktree.
+
+    Sync mode: backup fires out-of-band after consolidation completes.
+    Async mode: backup fires via the post-commit git hook when the job commits.
+    """
+    memory = get_memory_instance(user_id)
+    executor: TaskExecutor = app.state.executor
+
+    # Validate tool names eagerly so unknown tools return 400, not 500.
+    _VALID_TOOLS = {"dedupe", "redistribute", "link"}
+    if request.tools is not None:
+        unknown = [t for t in request.tools if t not in _VALID_TOOLS]
+        if unknown:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"Unknown consolidator tool(s): {unknown}")
+
+    def work():
+        result = memory.consolidate(
+            tools=request.tools,
+            window=request.window,
+            soft_cap_tokens=request.soft_cap_tokens,
+        )
+        return {"consolidate": result}
+
+    payload = ConsolidatePayload(
+        user_id=user_id,
+        tools=request.tools,
+        window=request.window,
+        soft_cap_tokens=request.soft_cap_tokens,
+    )
+    resp = await _submit_and_respond(
+        executor=executor,
+        submit_fn=executor.submit_consolidate,
+        user_id=user_id,
+        work=work,
+        payload=payload,
+        callback_url=request.callback_url,
+        sync=sync,
+    )
+    # In sync mode, fire-and-forget backup.
+    if resp.get("status") == "success":
+        _spawn_background(backup_user(user_id))
+    return resp
+
+
+@app.post("/memory/{user_id}/process-commit-and-consolidate")
+async def process_commit_and_consolidate(
+    user_id: str,
+    request: ProcessCommitAndConsolidateRequest,
+    sync: Optional[bool] = Query(None, description="Force sync (block-until-done) or async (return job_id). Default depends on executor."),
+    authenticated: bool = Depends(verify_api_key),
+):
+    """Process + commit a session, then consolidate. Single sequential thunk.
+
+    Sync mode: backup fires out-of-band after both operations complete.
+    Async mode: backup fires via the post-commit git hook when the job commits.
+    """
+    memory = get_memory_instance(user_id)
+    executor: TaskExecutor = app.state.executor
+
+    def work():
+        result = memory.process_commit_and_consolidate(
+            request.memory_input,
+            request.session_id,
+            request.session_date,
+            consolidate_tools=request.consolidate_tools,
+            window=request.window,
+            soft_cap_tokens=request.soft_cap_tokens,
+        )
+        return {"session_id": request.session_id, "consolidate": result.get("consolidate")}
+
+    payload = ConsolidatePayload(
+        user_id=user_id,
+        memory_input=request.memory_input,
+        session_id=request.session_id,
+        session_date=request.session_date,
+        tools=request.consolidate_tools,
+        window=request.window,
+        soft_cap_tokens=request.soft_cap_tokens,
+    )
+    resp = await _submit_and_respond(
+        executor=executor,
+        submit_fn=executor.submit_consolidate,
+        user_id=user_id,
+        work=work,
+        payload=payload,
+        callback_url=request.callback_url,
+        sync=sync,
+        session_id=request.session_id,
+    )
+    # In sync mode, fire-and-forget backup.
+    if resp.get("status") == "success":
+        _spawn_background(backup_user(user_id))
+    return resp
+
+
+@app.get("/memory/{user_id}/jobs/{job_id}")
+async def get_job_status(user_id: str, job_id: str, authenticated: bool = Depends(verify_api_key)):
+    """Poll for job status. user_id is for API symmetry; not enforced against the job record."""
+    executor: TaskExecutor = app.state.executor
+    result = executor.get_job(job_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    return {
+        "status": "success",
+        "job": result.to_dict(),
+        "metadata": {"user_id": user_id, "timestamp": datetime.now().isoformat()},
+    }
 
 
 # --- Utility Endpoints ---
@@ -548,6 +844,8 @@ async def list_users(authenticated: bool = Depends(verify_api_key)):
 async def health_check():
     """Liveness + backend info. Safe to call unauthenticated for reverse-proxy healthchecks."""
     backup_name = repo_manager.backup.name if repo_manager else "unknown"
+    executor = getattr(app.state, "executor", None)
+    executor_type = type(executor).__name__ if executor is not None else "unknown"
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
@@ -556,6 +854,7 @@ async def health_check():
         "active_contexts": len(memory_instances),
         "storage_backend": "local",
         "backup_backend": backup_name,
+        "executor_type": executor_type,
     }
 
 

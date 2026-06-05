@@ -27,3 +27,4 @@ test_output/
 
 # Machine-local deployment context (Railway, Coolify, etc.)
 .pi/
+.env.hatchet-test

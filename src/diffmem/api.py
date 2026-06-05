@@ -9,6 +9,7 @@ from .writer_agent.onboarding_agent import OnboardingAgent
 from .retrieval_agent.baseline import load_baseline, load_always_load_for_entities, load_user_entity, load_recent_timeline
 from .retrieval_agent.agent import run_retrieval_agent, LLMConfig
 from .retrieval_agent.resolver import resolve_pointers
+from .consolidator_agent.agent import ConsolidatorAgent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -282,6 +283,92 @@ class DiffMemory:
         """Convenience method to process and immediately commit a session."""
         self.process_session(memory_input, session_id, session_date)
         self.commit_session(session_id)
+
+    # CONSOLIDATION
+
+    _ALLOWED_TOOLS = ("dedupe", "redistribute", "link")
+
+    def _consolidator(self) -> ConsolidatorAgent:
+        return ConsolidatorAgent(
+            str(self.repo_path),
+            self.user_id,
+            self.openrouter_api_key,
+            self.model,
+        )
+
+    def consolidate(self,
+                    tools: Optional[List[str]] = None,
+                    window: int = 3,
+                    soft_cap_tokens: int = 32000) -> Dict[str, Any]:
+        """Run the consolidator over this user's worktree.
+
+        Args:
+            tools: subset of ("dedupe", "redistribute", "link") in any order.
+                   Execution is always in canonical order: dedupe → redistribute → link.
+                   If None, runs all three.
+            window: commit window for the link tool (default 3).
+            soft_cap_tokens: token cap above which an entity is considered
+                             oversized by the redistribute tool (default 32_000).
+
+        Returns:
+            Dict with per-tool result dicts under `results`, plus a `tools_run`
+            list and aggregate `commits`.
+        """
+        if not self.is_onboarded():
+            raise ValueError(f"User {self.user_id} has not been onboarded.")
+        if tools is None:
+            tools = list(self._ALLOWED_TOOLS)
+        # Validate + canonical order.
+        unknown = [t for t in tools if t not in self._ALLOWED_TOOLS]
+        if unknown:
+            raise ValueError(f"Unknown consolidator tool(s): {unknown}")
+        ordered = [t for t in self._ALLOWED_TOOLS if t in tools]
+
+        consolidator = self._consolidator()
+        results: Dict[str, Any] = {}
+        all_commits: List[str] = []
+
+        for tool in ordered:
+            if tool == "dedupe":
+                r = consolidator.run_dedupe()
+            elif tool == "redistribute":
+                r = consolidator.run_redistribute(soft_cap_tokens=soft_cap_tokens)
+            else:  # link
+                r = consolidator.run_link(window=window)
+            results[tool] = r
+            all_commits.extend(r.get("commits", []))
+
+        return {
+            "status": "ok",
+            "tools_run": ordered,
+            "results": results,
+            "commits": all_commits,
+            "timestamp": datetime.now().isoformat(),
+            "user_id": self.user_id,
+        }
+
+    def process_commit_and_consolidate(self,
+                                       memory_input: str,
+                                       session_id: str,
+                                       session_date: str = None,
+                                       consolidate_tools: Optional[List[str]] = None,
+                                       window: int = 3,
+                                       soft_cap_tokens: int = 32000) -> Dict[str, Any]:
+        """Process + commit a session, then consolidate. Single sequential call;
+        returns the merged result dict."""
+        self.process_and_commit_session(memory_input, session_id, session_date)
+        consolidate_result = self.consolidate(
+            tools=consolidate_tools,
+            window=window,
+            soft_cap_tokens=soft_cap_tokens,
+        )
+        return {
+            "status": "ok",
+            "session_id": session_id,
+            "consolidate": consolidate_result,
+            "timestamp": datetime.now().isoformat(),
+            "user_id": self.user_id,
+        }
 
     # UTILITY OPERATIONS
 

@@ -2,7 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/release/python-3110/)
-[![Prototype](https://img.shields.io/badge/status-prototype-orange.svg)](https://github.com/Growth-Kinetics/DiffMem)
+[![Production](https://img.shields.io/badge/status-production-brightgreen.svg)](https://github.com/Growth-Kinetics/DiffMem)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](https://github.com/Growth-Kinetics/DiffMem)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Growth-Kinetics/DiffMem)
 
 DiffMem is a lightweight, git-based memory backend for AI agents and conversational systems. It uses Markdown files for human-readable storage, Git for tracking temporal evolution through differentials, and a git-native retrieval agent that explores the repository via shell commands (`grep`, `git log`, `git diff`, `git blame`) to build targeted context. No vector databases, no embeddings, no BM25 — just git and an LLM.
@@ -88,6 +89,14 @@ service port or proxy target, use the same value you set for `PORT`.
 
 Leave `REQUIRE_AUTH=false` (the default) if you're only calling DiffMem from another service on the same Coolify instance. Set `REQUIRE_AUTH=true` + `API_KEY=<long-random-string>` if you expose the domain publicly.
 
+### Production deployment with Hatchet
+
+For durable, observable, per-user-serialized task execution with [Hatchet](https://cloud.onhatchet.run)
+on a Hetzner Cloud VPS, see **[docs/deployment-hatchet.md](docs/deployment-hatchet.md)**.
+
+The production compose file is `deploy/docker-compose.hatchet.yml` — it runs two services
+from the same image: `diffmem-api` (HTTP server) and `diffmem-worker` (Hatchet consumer).
+
 ### Plain Docker Compose
 
 On any Linux box with Docker:
@@ -130,6 +139,10 @@ Everything is configured via environment variables. Only `OPENROUTER_API_KEY` is
 | `GITHUB_TOKEN` | *(unset)* | PAT with `repo` scope, for `github` backup |
 | `STORAGE_PATH` | `/data/storage` | Where the central git repo lives |
 | `WORKTREE_ROOT` | `/data/worktrees` | Where per-user worktrees are mounted |
+| `EXECUTOR` | `inline` | Task executor: `inline` (default) or `hatchet` (durable, observable) |
+| `HATCHET_CLIENT_TOKEN` | *(unset)* | Hatchet Cloud API token; required when `EXECUTOR=hatchet` |
+| `HATCHET_NAMESPACE` | `diffmem` | Namespace prefix for Hatchet workflow and worker names |
+| `HATCHET_WORKER_SLOTS` | `10` | In-process concurrency slots per worker replica |
 
 ### Enabling GitHub backup (optional)
 
@@ -168,6 +181,13 @@ The endpoints you'll actually use:
 - `POST /memory/{user_id}/onboard` — create a new user
 - `POST /memory/{user_id}/process-and-commit` — ingest a session transcript and commit
 - `POST /memory/{user_id}/context` — retrieve context for a conversation
+- `GET /memory/{user_id}/jobs/{job_id}` — poll a queued/running write or consolidate job
+
+Write endpoints accept `?sync=true|false` to override the default response mode and an
+optional `callback_url` in the body for webhook-style completion. Under `EXECUTOR=inline`
+(default) the default is synchronous (block-until-done; preserves pre-executor contract).
+Under `EXECUTOR=hatchet` the default is async (returns `{job_id, status}` in <500ms; poll
+the `/jobs/{job_id}` endpoint or supply `callback_url`).
 
 Example:
 
@@ -187,6 +207,67 @@ curl -X POST "http://localhost:8000/memory/alex/context" \
 
 If `REQUIRE_AUTH=true`, add `-H "Authorization: Bearer $API_KEY"` to every request.
 
+### Consolidation
+
+DiffMem ships with an out-of-band **consolidator agent** that repairs three
+failure modes the writer agent accumulates at scale: duplicate entities, an
+overgrown user entity, and missing interlinking. It exposes three tools —
+`dedupe`, `redistribute`, `link` — invokable independently or chained.
+
+Every consolidation commit is prefixed with `consolidate(dedupe):`,
+`consolidate(redistribute):`, or `consolidate(link):` so retrieval agents and
+humans can tell repair commits apart from session-formation commits.
+
+Endpoints:
+
+- `POST /memory/{user_id}/consolidate` — run any subset of tools on demand.
+- `POST /memory/{user_id}/process-commit-and-consolidate` — ingest a session,
+  commit, then consolidate in one HTTP call.
+
+Examples:
+
+```bash
+# Full chain (dedupe → redistribute → link), defaults.
+curl -X POST "http://localhost:8000/memory/alex/consolidate" \
+  -H "Content-Type: application/json" -d '{}'
+
+# Just dedupe, with custom soft cap and link window for any tools that use them.
+curl -X POST "http://localhost:8000/memory/alex/consolidate" \
+  -H "Content-Type: application/json" \
+  -d '{"tools": ["dedupe"], "window": 5, "soft_cap_tokens": 24000}'
+
+# Ingest a session, commit, then consolidate — single call.
+curl -X POST "http://localhost:8000/memory/alex/process-commit-and-consolidate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "memory_input": "Met Maya again today...",
+    "session_id": "s-042",
+    "consolidate_tools": ["dedupe", "link"]
+  }'
+```
+
+What each tool does:
+
+- **dedupe** — prefilters duplicate candidates (name similarity + overlapping
+  `related_entities` / `hard_cues`), asks an LLM to confirm at high confidence,
+  then merges the lower-strength file into the higher-strength one. The loser's
+  filename stem is preserved as an `alias` in the survivor's SEMANTIC INDEX so
+  the writer agent recognizes it on future sessions.
+- **redistribute** — scans for entities exceeding `soft_cap_tokens` (default
+  32 000, `len(content)//4` heuristic), then either (a) moves attributed
+  sections to their real subject's file (e.g. content about a colleague
+  living in the user entity → the colleague's `memories/people/*.md`) or
+  (b) extracts orphan themes into new `memories/contexts/{slug}.md` files.
+  Prefers smaller target entities (balancing rule).
+- **link** — mines git log over the last `window` commits (default 3) for file
+  co-occurrence, then asks an LLM to weave Obsidian-style wikilinks
+  (`[[memories/people/maya|Maya]]`) inline in the prose. Idempotent: existing
+  wikilinks are not duplicated. Opens the memory folder for navigation as an
+  Obsidian vault.
+
+A per-user lockfile (`<worktree>/.diffmem/consolidator.lock`) prevents
+concurrent consolidator / writer runs.
+
 ## Repository layout
 
 Each user's memory is organized as:
@@ -204,24 +285,19 @@ Each user's memory is organized as:
 
 See `repo_guide.md` in the repo root for the full memory schema (this file is copied into each user's worktree as `repo_guide.md` so the writer agent can reference it).
 
-## Prototype Status and Limitations
+## Status
 
-What's working:
-- Entity creation/update from transcripts.
-- Git-native agent retrieval with temporal reasoning.
-- Targeted context assembly (file sections, diffs, commit logs).
-- Fallback to baseline (user entity) when agent fails.
+DiffMem is production software. It runs Annabelle's memory across thousands of conversations and has been through several iterations of hardening:
+
+- **v0.4** — pluggable task executor (inline thread pool or Hatchet for durable/observable execution), per-user write serialization enforced server-side, out-of-band consolidation tools (dedupe, redistribute, link), bidirectional GitHub sync.
+- **v0.3** — retrieval agent with sandboxed shell commands, git-native temporal reasoning, fallback to baseline on agent failure.
+- **v0.2** — async write pipeline, thread pool to keep the event loop free, Railway/Docker hardening.
 
 Known limitations:
-- Agent retrieval quality depends on the LLM model used.
-- No multi-user concurrency locks (one worktree = one writer at a time). Callers must
-  serialize writes for the same user.
-- Write endpoints (`process-and-commit`, `process-session`, `commit-session`) run the
-  writer agent in a background thread pool and can take 60–600s for large sessions.
-  The HTTP response is returned once the write completes; the connection stays open.
-- Writer agent prompt tuning is ongoing.
-
-We're sharing this as open-source R&D to spark discussion. Feedback welcome!
+- Write operations take 60–600s (LLM + git I/O). By default the HTTP response blocks until completion; pass `?sync=false` to get a `job_id` back immediately and poll `GET /memory/{user_id}/jobs/{job_id}`.
+- Retrieval quality is model-dependent. GPT-4o-class models produce materially better entity linking and temporal reasoning than smaller models.
+- Writer agent can default to updating the user entity on every session. Run the consolidator periodically (`POST /memory/{user_id}/consolidate`) to redistribute overgrown entities.
+- Prompt tuning is ongoing — contributions welcome.
 
 ## Future Vision
 
@@ -233,7 +309,7 @@ DiffMem points to a future where AI memory is as versioned and collaborative as 
 - **Multi-Provider Retrieval**: Swap between OpenRouter, Cerebras, or any OpenAI-compatible provider.
 - **Open-Source Ecosystem**: Plugins for voice input, mobile sync, or integration with tools like Obsidian.
 
-This is an R&D project from Growth Kinetics, a boutique data solutions agency specializing in AI enablement. We'd love collaborations, PRs, or honest feedback to improve it.
+DiffMem is built and maintained by [Growth Kinetics](https://growthkinetics.com). We'd love collaborations, PRs, or honest feedback.
 
 ## Contributing
 
