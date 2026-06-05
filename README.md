@@ -2,7 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/release/python-3110/)
-[![Prototype](https://img.shields.io/badge/status-prototype-orange.svg)](https://github.com/Growth-Kinetics/DiffMem)
+[![Production](https://img.shields.io/badge/status-production-brightgreen.svg)](https://github.com/Growth-Kinetics/DiffMem)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](https://github.com/Growth-Kinetics/DiffMem)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Growth-Kinetics/DiffMem)
 
 DiffMem is a lightweight, git-based memory backend for AI agents and conversational systems. It uses Markdown files for human-readable storage, Git for tracking temporal evolution through differentials, and a git-native retrieval agent that explores the repository via shell commands (`grep`, `git log`, `git diff`, `git blame`) to build targeted context. No vector databases, no embeddings, no BM25 — just git and an LLM.
@@ -284,25 +285,19 @@ Each user's memory is organized as:
 
 See `repo_guide.md` in the repo root for the full memory schema (this file is copied into each user's worktree as `repo_guide.md` so the writer agent can reference it).
 
-## Prototype Status and Limitations
+## Status
 
-What's working:
-- Entity creation/update from transcripts.
-- Git-native agent retrieval with temporal reasoning.
-- Targeted context assembly (file sections, diffs, commit logs).
-- Fallback to baseline (user entity) when agent fails.
+DiffMem is production software. It runs Annabelle's memory across thousands of conversations and has been through several iterations of hardening:
+
+- **v0.4** — pluggable task executor (inline thread pool or Hatchet for durable/observable execution), per-user write serialization enforced server-side, out-of-band consolidation tools (dedupe, redistribute, link), bidirectional GitHub sync.
+- **v0.3** — retrieval agent with sandboxed shell commands, git-native temporal reasoning, fallback to baseline on agent failure.
+- **v0.2** — async write pipeline, thread pool to keep the event loop free, Railway/Docker hardening.
 
 Known limitations:
-- Agent retrieval quality depends on the LLM model used.
-- Per-user write serialization is now enforced server-side by the task executor
-  (inline mode uses `threading.Lock`; hatchet mode uses `ConcurrencyExpression`).
-  Callers no longer need to serialize.
-- Write endpoints (`process-and-commit`, `process-session`, `commit-session`) run the
-  writer agent in a background thread pool and can take 60–600s for large sessions.
-  The HTTP response is returned once the write completes; the connection stays open.
-- Writer agent prompt tuning is ongoing.
-
-We're sharing this as open-source R&D to spark discussion. Feedback welcome!
+- Write operations take 60–600s (LLM + git I/O). By default the HTTP response blocks until completion; pass `?sync=false` to get a `job_id` back immediately and poll `GET /memory/{user_id}/jobs/{job_id}`.
+- Retrieval quality is model-dependent. GPT-4o-class models produce materially better entity linking and temporal reasoning than smaller models.
+- Writer agent can default to updating the user entity on every session. Run the consolidator periodically (`POST /memory/{user_id}/consolidate`) to redistribute overgrown entities.
+- Prompt tuning is ongoing — contributions welcome.
 
 ## Future Vision
 
@@ -314,7 +309,7 @@ DiffMem points to a future where AI memory is as versioned and collaborative as 
 - **Multi-Provider Retrieval**: Swap between OpenRouter, Cerebras, or any OpenAI-compatible provider.
 - **Open-Source Ecosystem**: Plugins for voice input, mobile sync, or integration with tools like Obsidian.
 
-This is an R&D project from Growth Kinetics, a boutique data solutions agency specializing in AI enablement. We'd love collaborations, PRs, or honest feedback to improve it.
+DiffMem is built and maintained by [Growth Kinetics](https://growthkinetics.com). We'd love collaborations, PRs, or honest feedback.
 
 ## Contributing
 

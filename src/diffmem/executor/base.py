@@ -141,3 +141,17 @@ class TaskExecutor(abc.ABC):
     @abc.abstractmethod
     def supports_async_api(self) -> bool:  # noqa: D401
         """True if this backend supports async job submission (job_id polling)."""
+
+    @property
+    @abc.abstractmethod
+    def supports_staged_writes(self) -> bool:  # noqa: D401
+        """True if the two-phase process-session → commit-session flow is supported.
+
+        The two-phase flow requires that both calls share an in-process git staging
+        area: process-session stages changes, commit-session commits them.  This is
+        only possible when the work thunk runs in the same process (InlineExecutor).
+
+        HatchetExecutor returns False because task handlers execute in a separate
+        worker process with no access to the API process's staging area.  Callers
+        should use process-and-commit (single-call) instead.
+        """

@@ -177,6 +177,17 @@ class HatchetExecutor(TaskExecutor):
         with self._refs_lock:
             return self._refs.get(job_id)
 
+    def _drop_ref(self, job_id: str) -> None:
+        """Remove the cached WorkflowRunRef for a terminal job.
+
+        Called after wait_for() resolves so that long-running processes do not
+        accumulate dead ref objects indefinitely.  The ref is only needed for
+        the ref.result() path in wait_for(); once the job is terminal it is
+        inert.  JobStore retains the result under its own 1 000-entry cap.
+        """
+        with self._refs_lock:
+            self._refs.pop(job_id, None)
+
     def _get_workflow_name(self, job_id: str) -> str | None:
         entry = self._get_ref_entry(job_id)
         return entry[1] if entry is not None else None
@@ -392,6 +403,10 @@ class HatchetExecutor(TaskExecutor):
             # path doesn't give it to us natively).  Best-effort.
             self._enrich_from_details(job_id, workflow_name=wf_name)
 
+            # Drop the ref — it's a dead WorkflowRunRef now.  JobStore owns
+            # the result; keeping the ref would cause _refs to grow unbounded.
+            self._drop_ref(job_id)
+
             final = self._jobstore.get(job_id)
             if final is not None:
                 return final
@@ -422,3 +437,11 @@ class HatchetExecutor(TaskExecutor):
         # out-of-band.  Default endpoint behaviour with EXECUTOR=hatchet is
         # async (return job_id immediately), opposite of InlineExecutor.
         return True
+
+    @property
+    def supports_staged_writes(self) -> bool:
+        # The Hatchet worker process is separate from the API process and has
+        # no access to the API's git staging area.  The two-phase
+        # process-session → commit-session flow cannot work through Hatchet.
+        # Use process-and-commit (single-call) instead.
+        return False

@@ -21,7 +21,8 @@ reachable from the internet; it opens an outbound gRPC connection to Hatchet Clo
   curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
   ```
   Full docs: [https://coolify.io/docs](https://coolify.io/docs/installation)
-- **Hatchet Cloud account** — free tier handles Annabelle-scale throughput.
+- **Hatchet Cloud account** — the free tier covers 1 000 runs/month;
+  Annabelle-scale (~6 000 runs/month) requires the Hobby plan (~$25/mo).
   Sign up at [https://cloud.onhatchet.run](https://cloud.onhatchet.run).
 
 ---
@@ -44,7 +45,7 @@ reachable from the internet; it opens an outbound gRPC connection to Hatchet Clo
 3. Inside the project, add a new **Resource → Docker Compose**.
 4. Set **Source** to this repo: `https://github.com/Growth-Kinetics/DiffMem`
 5. Set **Compose File Path** to: `deploy/docker-compose.hatchet.yml`
-6. Leave **Branch** as `main` (or `consolidator_agent` if testing).
+6. Leave **Branch** as `main`.
 
 ---
 
@@ -119,7 +120,7 @@ For Annabelle scale, the local volume + periodic Hetzner snapshot is sufficient.
 ```bash
 # API responds
 curl https://<your-coolify-domain>/health
-# → {"status": "healthy", "storage": "ok", "backup": "none"}
+# → {"status": "healthy", "storage_backend": "local", "backup_backend": "none", "executor_type": "HatchetExecutor", ...}
 
 # Worker visible in Hatchet
 # → Open https://cloud.onhatchet.run → your tenant → Workers tab

@@ -27,7 +27,7 @@
 #
 #   Full end-to-end verification (including worker execution) is the
 #   operator's responsibility before cutting Annabelle over.  See
-#   docs/annabelle-migration.md Step 5 for the manual smoke-test procedure.
+#   docs/deployment-hatchet.md Step 7 for the manual smoke-test procedure.
 
 from __future__ import annotations
 

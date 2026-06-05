@@ -508,10 +508,22 @@ async def process_session(
 ):
     """Process session transcript and stage changes.
 
+    Requires an executor that supports staged writes (InlineExecutor only).
+    Use process-and-commit for single-call ingestion; it works with all executors.
     Async mode: backup fires via the post-commit git hook when the job commits.
     """
-    memory = get_memory_instance(user_id)
     executor: TaskExecutor = app.state.executor
+    if not executor.supports_staged_writes:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=(
+                "process-session / commit-session require an executor that supports "
+                "in-process staged writes (EXECUTOR=inline). "
+                "Use POST /memory/{user_id}/process-and-commit instead, "
+                "which works with all executors."
+            ),
+        )
+    memory = get_memory_instance(user_id)
 
     def work():
         memory.process_session(request.memory_input, request.session_id, request.session_date)
@@ -545,18 +557,30 @@ async def commit_session(
 ):
     """Commit staged changes for a session.
 
+    Requires an executor that supports staged writes (InlineExecutor only).
+    Use process-and-commit for single-call ingestion; it works with all executors.
     Sync mode: backup fires out-of-band after commit completes.
     Async mode: backup fires via the post-commit git hook when the job commits.
     """
-    memory = get_memory_instance(user_id)
     executor: TaskExecutor = app.state.executor
+    if not executor.supports_staged_writes:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=(
+                "process-session / commit-session require an executor that supports "
+                "in-process staged writes (EXECUTOR=inline). "
+                "Use POST /memory/{user_id}/process-and-commit instead, "
+                "which works with all executors."
+            ),
+        )
+    memory = get_memory_instance(user_id)
 
     def work():
         memory.commit_session(request.session_id)
         return {"session_id": request.session_id, "message": "Session committed"}
 
-    # commit-session has no memory_input; use empty string as placeholder for
-    # the Hatchet backend (the worker will use session_id to locate staged changes).
+    # commit-session has no memory_input; empty string is a safe placeholder
+    # since this endpoint is guarded to inline-only (supports_staged_writes).
     payload = WritePayload(
         user_id=user_id,
         memory_input="",
@@ -820,6 +844,8 @@ async def list_users(authenticated: bool = Depends(verify_api_key)):
 async def health_check():
     """Liveness + backend info. Safe to call unauthenticated for reverse-proxy healthchecks."""
     backup_name = repo_manager.backup.name if repo_manager else "unknown"
+    executor = getattr(app.state, "executor", None)
+    executor_type = type(executor).__name__ if executor is not None else "unknown"
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
@@ -828,6 +854,7 @@ async def health_check():
         "active_contexts": len(memory_instances),
         "storage_backend": "local",
         "backup_backend": backup_name,
+        "executor_type": executor_type,
     }
 
 

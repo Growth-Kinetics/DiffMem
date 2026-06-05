@@ -175,3 +175,9 @@ class InlineExecutor(TaskExecutor):
         # preserves the pre-M2 API contract for callers that don't pass ?sync.
         # Pass ?sync=false explicitly to get async (queued) behaviour.
         return False
+
+    @property
+    def supports_staged_writes(self) -> bool:
+        # Both process-session and commit-session run as thunks in this process,
+        # sharing the same git staging area.  The two-phase flow is safe.
+        return True

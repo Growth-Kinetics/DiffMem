@@ -72,10 +72,12 @@ class JobStore:
     # ------------------------------------------------------------------
 
     def get(self, job_id: str) -> JobResult | None:
-        """Return a *shallow copy snapshot* of the job, or None."""
+        """Return the live JobResult object, or None if unknown.
+
+        Callers must treat the returned object as read-only; mutations should
+        go through update_status / set_result / set_error.  The object is not
+        copied — reads are cheap and a copy would not protect against the
+        underlying dataclass fields being mutated by another thread anyway.
+        """
         with self._lock:
-            job = self._store.get(job_id)
-            if job is None:
-                return None
-            # Return the live object — callers must treat it as read-only.
-            return job
+            return self._store.get(job_id)
