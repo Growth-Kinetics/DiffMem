@@ -129,3 +129,79 @@ Per-user serialisation is handled by Hatchet's `ConcurrencyExpression(expression
 Runs submitted with `EXECUTOR=hatchet` will be enqueued in Hatchet and stay in
 "queued" state until a worker is running. M4 adds `hatchet_worker.py` with the
 actual task handlers that reconstitute `DiffMemory` and execute the work.
+
+---
+
+## Worker process (M4)
+
+### API / worker split
+
+```
+API process (diffmem-server)          Worker process (diffmem-worker)
+──────────────────────────────        ────────────────────────────────────
+HatchetExecutor.submit_*()            hatchet_worker.py:
+  → workflow.run(input, ...)            register_workflows(hatchet)
+  → returns job_id immediately          _attach_write_handler(write_wf)
+                                        _attach_consolidate_handler(cons_wf)
+HatchetExecutor.get_job()               worker.start()  ← blocks forever
+  → hatchet.runs.get_status(job_id)       → pulls runs from Hatchet engine
+                                          → reconstitutes DiffMemory
+                                          → runs git + LLM work
+                                          → returns result dict
+```
+
+Both processes share the same `/data` volume.  They each hold their own
+`RepoManager` + `DiffMemory` cache in process memory — no cross-process
+coordination needed because DiffMemory holds no mutable shared state.
+
+Per-user serialisation is enforced by Hatchet's
+`ConcurrencyExpression(expression="input.user_id", max_runs=1)` — a second job
+for the same user queues until the first completes, even across worker restarts.
+
+### Entrypoint
+
+```bash
+# pip-installed package
+diffmem-worker
+
+# development (no install needed)
+python -m diffmem.executor.hatchet_worker
+```
+
+### Worker env vars
+
+The worker requires the same env vars as the API process:
+
+| Variable | Required | Notes |
+|---|---|---|
+| `HATCHET_CLIENT_TOKEN` | Yes | Same token as the API process |
+| `OPENROUTER_API_KEY` | Yes | LLM API key |
+| `DEFAULT_MODEL` | Yes | Model name (or set in DiffMemory init) |
+| `STORAGE_PATH` | Yes | Base path for user worktrees (read by RepoManager) |
+| `WORKTREE_ROOT` | No | Worktree root override (read by RepoManager) |
+| `HATCHET_WORKER_SLOTS` | No | Max concurrent jobs on this worker (default `10`) |
+| `HATCHET_NAMESPACE` | No | Namespace scoping |
+| `HATCHET_CLIENT_HOST_PORT` | No | For self-hosted Hatchet |
+| `HATCHET_CLIENT_TLS_STRATEGY` | No | `tls` \| `mtls` \| `none` |
+
+### Per-worker memoisation
+
+`hatchet_worker.py` keeps a module-level `_repo_manager_singleton` and a
+`_memory_cache: dict[str, DiffMemory]` (protected by a `threading.Lock`).
+This mirrors the `memory_instances` dict in `server.py`: workers run for
+hours and we avoid reconstructing `RepoManager` / `DiffMemory` on every job.
+
+### Task handler notes
+
+- Handlers are **sync** (not async) — matches the blocking git+LLM workload.
+- `retries=0` on both tasks — LLM output is non-deterministic; Hatchet's
+  default retry could produce duplicate commits. Failures surface immediately
+  to the caller via the polling API. Revisit in M6 ADR.
+- Callbacks (`input.callback_url`) are best-effort: POST on success only,
+  never on failure, swallowed if the POST itself fails.
+
+### Key files (M4 addition)
+
+| File | Description |
+|---|---|
+| `hatchet_worker.py` | Worker process: attaches task handlers, starts blocking worker loop. |

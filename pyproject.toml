@@ -57,6 +57,7 @@ hatchet = ["hatchet-sdk"]
 [tool.poetry.scripts]
 diffmem = "diffmem.cli:main"
 diffmem-server = "diffmem.server:main"
+diffmem-worker = "diffmem.executor.hatchet_worker:main"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
