@@ -544,3 +544,34 @@ def test_enrich_skips_result_when_jobstore_already_has_one(hatchet_executor, cap
     # Timestamps populated.
     assert final.started_at is not None
     assert final.completed_at is not None
+
+
+def test_unwrap_silent_when_expect_wrapped_false(caplog):
+    """REST-source unwrap (expect_wrapped=False) is silent on already-unwrapped output."""
+    from diffmem.executor.hatchet import _unwrap_task_output
+    import logging
+    caplog.set_level(logging.WARNING)
+
+    # Output is already unwrapped (the shape Hatchet's REST runs.get() returns).
+    already_unwrapped = {"session_id": "s1", "status": "completed", "user_id": "alice"}
+    result = _unwrap_task_output("diffmem-write", already_unwrapped, expect_wrapped=False)
+
+    # Passthrough, no warning.
+    assert result == already_unwrapped
+    shape_warns = [r for r in caplog.records if "HATCHET_OUTPUT_SHAPE_UNEXPECTED" in r.message]
+    assert not shape_warns, f"Expected silent passthrough, got warnings: {shape_warns}"
+
+
+def test_unwrap_warns_when_expect_wrapped_true_default(caplog):
+    """Default (expect_wrapped=True) still warns on shape mismatch."""
+    from diffmem.executor.hatchet import _unwrap_task_output
+    import logging
+    caplog.set_level(logging.WARNING)
+
+    already_unwrapped = {"session_id": "s1", "status": "completed", "user_id": "alice"}
+    result = _unwrap_task_output("diffmem-write", already_unwrapped)
+    # Same passthrough behavior...
+    assert result == already_unwrapped
+    # ...but a warning IS emitted.
+    shape_warns = [r for r in caplog.records if "HATCHET_OUTPUT_SHAPE_UNEXPECTED" in r.message]
+    assert len(shape_warns) == 1, f"Expected 1 warning, got {len(shape_warns)}"

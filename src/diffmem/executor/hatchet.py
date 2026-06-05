@@ -75,25 +75,40 @@ _TASK_NAMES: dict[str, str] = {
 }
 
 
-def _unwrap_task_output(workflow_name: str, output: object) -> object:
+def _unwrap_task_output(
+    workflow_name: str,
+    output: object,
+    *,
+    expect_wrapped: bool = True,
+) -> object:
     """Unwrap a Hatchet single-step workflow output dict.
 
     Hatchet returns workflow outputs as ``{<task_name>: <handler_return>}``.
     For DiffMem's single-step workflows we strip that wrapper so callers see
     the handler's direct return value (matches InlineExecutor's contract).
 
-    Defensive: returns ``output`` unchanged on shape mismatch and logs a
-    WARNING so future Hatchet SDK shape changes are visible.
+    Defensive: returns ``output`` unchanged on shape mismatch.
+
+    Args:
+        workflow_name: ``diffmem-write`` or ``diffmem-consolidate``.
+        output: raw output dict from Hatchet.
+        expect_wrapped: if True (default), a shape mismatch logs a WARNING
+            because the caller *expected* the Hatchet wrapper to be present
+            (e.g. ``wait_for`` calling ``ref.result()``).  If False, mismatches
+            are silent — used by ``_enrich_from_details`` which queries the
+            REST ``runs.get()`` endpoint that returns *already-unwrapped*
+            output (asymmetric with ``ref.result()`` per the Hatchet SDK).
     """
     expected = _TASK_NAMES.get(workflow_name)
     if not isinstance(output, dict) or not expected:
         return output
     if list(output.keys()) == [expected] and isinstance(output[expected], dict):
         return output[expected]
-    logger.warning(
-        f"HATCHET_OUTPUT_SHAPE_UNEXPECTED: workflow={workflow_name} "
-        f"expected_key={expected} actual_keys={list(output.keys())[:5]}"
-    )
+    if expect_wrapped:
+        logger.warning(
+            f"HATCHET_OUTPUT_SHAPE_UNEXPECTED: workflow={workflow_name} "
+            f"expected_key={expected} actual_keys={list(output.keys())[:5]}"
+        )
     return output
 
 
@@ -228,13 +243,19 @@ class HatchetExecutor(TaskExecutor):
         # returns; this is the fallback for jobs reaching terminal state via
         # get_job() without anyone calling wait_for() (e.g. submitted by
         # another process, status-polled to completion here).
+        #
+        # NOTE: Hatchet's REST `runs.get().run.output` returns the output
+        # *already unwrapped* (asymmetric with `ref.result()` which returns it
+        # wrapped).  We still call `_unwrap_task_output` for safety with
+        # `expect_wrapped=False` so the helper is quiet on the common
+        # already-unwrapped case.
         current = self._jobstore.get(job_id)
         if current is None or current.result is None:
             output = getattr(run, "output", None)
             if isinstance(output, dict):
                 wf_name = workflow_name or self._get_workflow_name(job_id)
                 if wf_name is not None:
-                    unwrapped = _unwrap_task_output(wf_name, output)
+                    unwrapped = _unwrap_task_output(wf_name, output, expect_wrapped=False)
                     if isinstance(unwrapped, dict):
                         self._jobstore.set_result(job_id, unwrapped)
 
