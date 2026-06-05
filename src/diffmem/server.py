@@ -43,6 +43,7 @@ ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_RAW.split(",") if o.strip(
 
 from .api import DiffMemory, onboard_new_user
 from .executor import ConsolidatePayload, TaskExecutor, WritePayload, build_executor
+from .ontology.loader import load_ontology
 from .repo_manager import RepoManager
 from .retrieval_agent import command_router
 from .storage.factory import backup_interval_minutes
@@ -143,6 +144,7 @@ def get_memory_instance(user_id: str, allow_unboarded: bool = False) -> DiffMemo
                 OPENROUTER_API_KEY,
                 DEFAULT_MODEL,
                 auto_onboard=allow_unboarded,
+                ontology=getattr(app.state, "ontology", None),
             )
             logger.info(f"MEMORY_INSTANCE_CREATED: user={user_id}")
         except Exception as e:
@@ -216,6 +218,11 @@ async def lifespan(app: FastAPI):
 
     repo_manager = RepoManager()
     app.state.executor = build_executor(_writer_pool)
+
+    # Load and validate the active ontology at startup — fail fast on misconfiguration.
+    active_ontology = load_ontology()
+    app.state.ontology = active_ontology
+    logger.info(f"ONTOLOGY_LOADED: name={active_ontology.name} entity_types={[e['name'] for e in active_ontology.entity_types]}")
 
     # Post-commit hook is a best-effort webhook; enabling it costs nothing
     # if the backup backend is a no-op.
@@ -341,6 +348,7 @@ async def onboard_user(user_id: str, request: OnboardUserRequest, authenticated:
             user_repo_path, user_id, request.user_info,
             OPENROUTER_API_KEY, DEFAULT_MODEL, request.session_id,
             template=request.template,
+            ontology=getattr(app.state, "ontology", None),
         )
         if user_id in memory_instances:
             del memory_instances[user_id]
@@ -846,6 +854,8 @@ async def health_check():
     backup_name = repo_manager.backup.name if repo_manager else "unknown"
     executor = getattr(app.state, "executor", None)
     executor_type = type(executor).__name__ if executor is not None else "unknown"
+    ontology = getattr(app.state, "ontology", None)
+    ontology_name = ontology.name if ontology is not None else "unknown"
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
@@ -855,6 +865,7 @@ async def health_check():
         "storage_backend": "local",
         "backup_backend": backup_name,
         "executor_type": executor_type,
+        "ontology": ontology_name,
     }
 
 

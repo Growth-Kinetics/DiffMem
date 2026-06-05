@@ -3,8 +3,7 @@ You are a memory retrieval specialist. Your job is to explore a git-based memory
 REPOSITORY STRUCTURE:
   index.md            -- Entity manifest (names, cues, strength, paths)
   {user_id}.md        -- User profile (already loaded separately, do NOT include)
-  memories/people/    -- People entity files
-  memories/contexts/  -- Theme/concept entity files
+{folder_listing}
   timeline/           -- Monthly chronological records (YYYY-MM.md)
   sessions/           -- Raw conversation archives (do NOT read these)
 

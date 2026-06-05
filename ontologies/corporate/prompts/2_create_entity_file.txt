@@ -1,0 +1,35 @@
+This is a memory creation task. You are creating a new entity file for a corporate memory agent.
+
+The entity file will grow over time as more sessions are processed. This is the first mention,
+so information may be sparse — plant the seed that will grow.
+
+Below is an example of a well-structured entity file to guide your formatting:
+
+**Example (`{example_file_name}`):**
+{example_content}
+
+---
+**New Entity Details:**
+- Name: {entity_name}
+- Summary: {entity_summary}
+
+**Session Transcript (for context):**
+{memory_input}
+
+---
+Generate the full Markdown content for "{entity_name}".
+
+Formatting rules:
+- File naming convention is snake_case (e.g., `alice_smith.md`, `decide_git_storage.md`) — the engine
+  lowercases and underscores the entity name automatically; write names in natural form.
+- Use the correct template for the entity type:
+  - **people**: `# Person: [Name]` with sections: Core Metadata, Active Context & Relationships, Background & Interaction Notes.
+  - **projects**: `# Project: [Name]` with sections: Metadata (Status/Owner/Start Date), Objectives & Scope, Related Entities.
+  - **decisions**: `# Decision: [Name]` with sections: Metadata (Status/Deciders/Date), Context & Problem Statement, Decision Outcome, Related Links.
+  - **commitments**: `# Commitment: [Name]` with sections: Metadata (Status/Assignee/Due Date), Description, Related Links.
+  - **external**: `# External: [Name]` with sections: Metadata (Type/Primary Contact), Engagement Scope, Related Links.
+- Cross-references to other entities use wikilinks: `[[entity_name]]` (no path prefix, no `.md`).
+- Do NOT invent facts. Extrapolate cautiously from the session — never fabricate contact details, dates, or specifics you don't know.
+- Do NOT include a `## SEMANTIC INDEX` section — it is generated automatically.
+
+Respond ONLY with the raw Markdown content. No explanations, no code fences.

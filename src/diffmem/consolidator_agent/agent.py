@@ -17,6 +17,7 @@ from openai import OpenAI
 
 from . import _dedupe, _link, _redistribute
 from .lock import ConsolidatorLock
+from diffmem.ontology.loader import OntologyProfile, load_ontology
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class ConsolidatorAgent:
         model: Optional[str] = None,
         llm_call: Optional[LLMCall] = None,
         validate_paths: bool = True,
+        ontology: Optional[OntologyProfile] = None,
     ) -> None:
         if not model:
             raise ValueError("model must be set via argument or DEFAULT_MODEL env var")
@@ -49,6 +51,7 @@ class ConsolidatorAgent:
         self.user_path = self.repo_path
         self.model = model
         self.prompts_path = Path(__file__).parent / "prompts"
+        self.ontology: OntologyProfile = ontology if ontology is not None else load_ontology()
 
         if validate_paths and not self.repo_path.exists():
             raise FileNotFoundError(f"Worktree not found: {self.repo_path}")
@@ -112,6 +115,7 @@ class ConsolidatorAgent:
                 prompts_dir=self.prompts_path,
                 llm_call=self._call_llm,
                 user_id=self.user_id,
+                entity_dirs=self.ontology.entity_dirs(self.repo_path),
             )
 
     def run_redistribute(self, soft_cap_tokens: int = 32000) -> Dict[str, Any]:
@@ -126,6 +130,8 @@ class ConsolidatorAgent:
                 llm_call=self._call_llm,
                 user_id=self.user_id,
                 soft_cap_tokens=soft_cap_tokens,
+                entity_dirs=self.ontology.entity_dirs(self.repo_path),
+                contexts_folder=self.ontology.contexts_folder(self.repo_path),
             )
 
     def run_link(self, window: int = 3) -> Dict[str, Any]:

@@ -1,0 +1,12 @@
+{
+  "name": "personal",
+  "description": "Default personal/conversational ontology. People, thematic contexts, and timeline. Designed for long-horizon personal memory (Annabelle, neurodivergent support, personal AI companions).",
+  "entity_types": [
+    { "name": "people",   "folder": "memories/people",   "index_type": "human"   },
+    { "name": "contexts", "folder": "memories/contexts", "index_type": "concept" },
+    { "name": "events",   "folder": "memories/events",   "index_type": "concept" }
+  ],
+  "timeline_enabled": true,
+  "user_entity_enabled": true,
+  "contexts_folder": "memories/contexts"
+}

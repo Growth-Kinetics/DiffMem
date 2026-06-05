@@ -229,9 +229,10 @@ def run(
     prompts_dir: Path,
     llm_call: Callable[[str, bool], Any],
     user_id: str,
+    entity_dirs: List[Path] = None,
 ) -> Dict[str, Any]:
     """Execute the dedupe pipeline. Returns the canonical result dict."""
-    entities = scan_entities(worktree)
+    entities = scan_entities(worktree, entity_dirs=entity_dirs)
     candidates = find_candidate_pairs(entities)
     commits: List[str] = []
     merges = 0
@@ -265,7 +266,7 @@ def run(
 
     # Rebuild master index only if anything happened
     if merges:
-        rebuild_master_index(worktree, user_id, repo=repo)
+        rebuild_master_index(worktree, user_id, repo=repo, entity_dirs=entity_dirs)
         if repo.is_dirty(untracked_files=True):
             repo.git.add("index.md")
             repo.index.commit("consolidate(dedupe): rebuild master index.md")

@@ -18,6 +18,8 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 packages = [{include = "diffmem", from = "src"}]
+# ontologies/ lives at src/diffmem/ontologies/ and is included automatically
+# by the packages directive above. No separate include directive needed.
 
 [tool.poetry.dependencies]
 python = "^3.10"

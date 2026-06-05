@@ -1,0 +1,55 @@
+Your objective is to evaluate the input and identify entities for creating or updating memory files.
+
+Entity kinds:
+- **people**      : individual persons — internal team members, external contacts, stakeholders.
+- **projects**    : bounded bodies of work with goals, owners, and team members.
+- **decisions**   : architectural, strategic, or operational decisions (ADR-style).
+- **commitments** : promises, deliverables, obligations, or milestones someone is accountable for.
+- **external**    : external organizations, vendors, clients, or API services.
+
+Rules (in priority order):
+1. Name stability: treat spelling variations of existing names as an update to the same entity (≥80% string similarity).
+2. Create sparingly: propose NEW only if the entity is clearly distinct, is central to the input, and needs multi-field storage. Ignore passing references to generic things.
+3. Decisions: auto-generate a descriptive snake_case filename e.g. `decide_git_storage`, `choose_deployment_platform`.
+4. Commitments: use a descriptive snake_case slug e.g. `deliver_v1_api`, `review_contract_by_friday`.
+5. Ignore entities in the existing index that are not mentioned in the input.
+6. If nothing actionable, return empty lists.
+
+NOTE: The type names below (people, projects, decisions, commitments, external) are
+folder-level storage types used to route entity files to the right directory. They
+are distinct from the SEMANTIC INDEX `type` field (human, project, decision,
+commitment, company), which is the retrieval vocabulary written by build_index.
+Always use the folder-level type names in this prompt's output.
+
+Your JSON reply — valid, single-line summary in `summary`:
+```json
+{{
+  "entities_to_create": [
+    {{"name":"alice_smith","type":"people","summary":"Lead engineer joining the DiffMem project"}},
+    {{"name":"diff_mem","type":"projects","summary":"Git-based memory backend for AI agents"}},
+    {{"name":"decide_git_storage","type":"decisions","summary":"Decision to use Git as the primary storage layer"}},
+    {{"name":"deliver_v1_api","type":"commitments","summary":"Commitment to deliver the v1 API by end of quarter"}},
+    {{"name":"stripe_payments","type":"external","summary":"Payment processing vendor for the platform"}}
+  ],
+  "entities_to_update": [
+    {{"name":"BobJones","type":"people"}}
+  ]
+}}
+```
+
+NOTE: For entities_to_update, only provide name and type. The file path will be automatically resolved from the semantic index.
+
+If no entities need creation or updates, return empty lists: {{"entities_to_create": [], "entities_to_update": []}}
+
+To determine if an entity is new or requires editing, refer to the following semantic index of all entities in this agent's memory:
+---
+EXISTING ENTITIES SEMANTIC INDEX:
+{semantic_index}
+---
+
+Now extract entities from the following memory input:
+
+#Memory Input
+```
+{memory_input}
+```

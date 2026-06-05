@@ -31,6 +31,10 @@ src/diffmem/             — Core package (importable as a library or run as a s
                              branches against a private GitHub repo
     base.py              —   Abstract base classes; BackupBackend defines pull_user() contract
 
+  ontology/              — Ontology profile loader (DIFFMEM_ONTOLOGY env var)
+    loader.py            —   OntologyProfile dataclass + load_ontology(); raises ValueError on unknown name
+    __init__.py
+
   executor/              — Pluggable task executor; backend chosen via EXECUTOR env var
     base.py              —   TaskExecutor ABC, JobStatus/JobHandle/JobResult, WritePayload/ConsolidatePayload
     jobstore.py          —   JobStore: thread-safe OrderedDict with FIFO eviction (inline mode)
@@ -39,6 +43,16 @@ src/diffmem/             — Core package (importable as a library or run as a s
     hatchet_workflows.py —   WriteInput/ConsolidateInput models + register_workflows(); shared by API + worker
     hatchet_worker.py    —   Worker process: @workflow.task() handlers + worker.start() loop
     factory.py           —   build_executor(pool): reads EXECUTOR env var, returns correct impl
+
+ontologies/              — Pluggable entity taxonomy profiles (DIFFMEM_ONTOLOGY env var)
+  personal/              —   Default profile: people / contexts / events (Annabelle / personal AI)
+    schema.json          —     Entity types, folder map, index_type vocabulary
+    repo_guide.md        —     Schema reference copied into each user worktree at onboard
+  corporate/             —   Tommy's 5-entity CRM profile: people / projects / decisions / commitments / external
+    schema.json
+    repo_guide.md
+    prompts/             —     Overridden prompts (1_identify_entities, 2_create_entity_file, etc.)
+  README.md              —   How to pick a profile, write a custom ontology, contribute to OSS
 
 docs/                    — Structural documentation
   CODE_INDEX.md          —   This file
@@ -67,6 +81,9 @@ pyproject.toml           — Package metadata and dependencies
   `retrieval_agent/agent.run_retrieval_agent()` → `resolver.resolve_pointers()`
 - **Storage factory:** `storage/factory.py` → `LocalStorageBackend` (default) +
   optional `GitHubBackupBackend`
+- **Ontology:** `DiffMemory.__init__()` calls `load_ontology()` once; propagated to
+  `WriterAgent` (prompt resolution, folder map), `OnboardingAgent` (dir creation,
+  repo_guide copy), and `run_retrieval_agent()` (folder listing in system prompt)
 - **Consolidation pipeline:** `consolidator_agent/agent.py` →
   `ConsolidatorAgent.run_dedupe()` / `run_redistribute()` / `run_link()`.
   Commits use the `consolidate(...)` prefix.
