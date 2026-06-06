@@ -448,3 +448,111 @@ def test_plural_normalisation_safe():
     et2 = "people"
     singular2 = et2[:-1] if et2.endswith('s') else et2
     assert singular2 == "people", "no trailing s, unchanged"
+
+
+# ---------------------------------------------------------------------------
+# is_onboarded / validate_setup regression (ADR ON-004 follow-up)
+# Bug: hardcoded `self.user_path / "memories"` in is_onboarded() and
+# validate_setup() broke every write under non-personal ontologies. The
+# corporate-ontology Growth Kinetics deployment 2026-06-06 caught this in prod:
+# onboarding succeeded, the worktree was fully populated under entities/, but
+# every subsequent process-and-commit returned HTTP 500 with
+# "User has not been onboarded" because the existence check looked for
+# memories/ which doesn't exist in the corporate folder map.
+# ---------------------------------------------------------------------------
+
+def _make_user_worktree(tmp_path, user_id: str, ontology) -> Path:
+    """Helper: build a minimal worktree that matches what onboard_user would create."""
+    (tmp_path / f"{user_id}.md").write_text(f"# {user_id}\n")
+    # Create the ontology's first entity dir + one file in it (mirrors onboard).
+    first_dir = ontology.entity_dirs(tmp_path)[0]
+    first_dir.mkdir(parents=True)
+    (first_dir / "sentinel.md").write_text("# sentinel\n")
+    return tmp_path
+
+
+def test_is_onboarded_true_for_corporate_layout(tmp_path):
+    """Regression: is_onboarded() must return True when entity_dirs exist
+    (corporate ontology uses entities/, not memories/)."""
+    from diffmem.api import DiffMemory
+    p = load_ontology("corporate")
+    _make_user_worktree(tmp_path, "alex", p)
+    mem = DiffMemory(
+        repo_path=str(tmp_path), user_id="alex",
+        openrouter_api_key="dummy", model="test-model", ontology=p,
+    )
+    assert mem.is_onboarded() is True, (
+        "corporate-ontology worktree with entities/ populated must be onboarded"
+    )
+
+
+def test_is_onboarded_true_for_personal_layout(tmp_path):
+    """Regression: is_onboarded() still returns True for personal-ontology
+    worktrees using the legacy memories/ folder."""
+    from diffmem.api import DiffMemory
+    p = load_ontology("personal")
+    _make_user_worktree(tmp_path, "alex", p)
+    mem = DiffMemory(
+        repo_path=str(tmp_path), user_id="alex",
+        openrouter_api_key="dummy", model="test-model", ontology=p,
+    )
+    assert mem.is_onboarded() is True
+
+
+def test_is_onboarded_legacy_memories_fallback(tmp_path):
+    """Regression: pre-ontology worktrees (only memories/ exists, no entities/)
+    must still register as onboarded under any ontology — that's the fallback path."""
+    from diffmem.api import DiffMemory
+    p = load_ontology("personal")
+    (tmp_path / "alex.md").write_text("# alex\n")
+    (tmp_path / "memories").mkdir()
+    mem = DiffMemory(
+        repo_path=str(tmp_path), user_id="alex",
+        openrouter_api_key="dummy", model="test-model", ontology=p,
+    )
+    assert mem.is_onboarded() is True
+
+
+def test_is_onboarded_false_when_user_md_missing(tmp_path):
+    """is_onboarded must still return False when user_id.md is missing,
+    even if entity dirs exist."""
+    from diffmem.api import DiffMemory
+    p = load_ontology("corporate")
+    # Create entity dirs but no user.md
+    (p.entity_dirs(tmp_path)[0]).mkdir(parents=True)
+    mem = DiffMemory(
+        repo_path=str(tmp_path), user_id="alex",
+        openrouter_api_key="dummy", model="test-model", ontology=p,
+        auto_onboard=True,  # tmp_path exists but is empty otherwise
+    )
+    assert mem.is_onboarded() is False
+
+
+def test_is_onboarded_false_when_no_entity_dirs_and_no_memories(tmp_path):
+    """Belt-and-suspenders: with corporate ontology and no entities/ dirs AND
+    no memories/ fallback, is_onboarded must return False."""
+    from diffmem.api import DiffMemory
+    p = load_ontology("corporate")
+    (tmp_path / "alex.md").write_text("# alex\n")
+    mem = DiffMemory(
+        repo_path=str(tmp_path), user_id="alex",
+        openrouter_api_key="dummy", model="test-model", ontology=p,
+    )
+    assert mem.is_onboarded() is False
+
+
+def test_validate_setup_corporate_layout_ok(tmp_path):
+    """validate_setup() must not flag missing memories/ as an issue for a
+    properly onboarded corporate-ontology worktree."""
+    from diffmem.api import DiffMemory
+    p = load_ontology("corporate")
+    _make_user_worktree(tmp_path, "alex", p)
+    mem = DiffMemory(
+        repo_path=str(tmp_path), user_id="alex",
+        openrouter_api_key="dummy", model="test-model", ontology=p,
+    )
+    result = mem.validate_setup()
+    # OpenRouter key warning is expected (we passed dummy); entity-dir issue is the regression
+    assert "memories" not in " ".join(result["issues"]), (
+        f"validate_setup must not require memories/ under corporate ontology, got: {result['issues']}"
+    )

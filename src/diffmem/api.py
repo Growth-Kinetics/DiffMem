@@ -74,12 +74,24 @@ class DiffMemory:
         return self._writer_agent
 
     def is_onboarded(self) -> bool:
-        required_paths = [
-            self.user_path,
-            self.user_path / f"{self.user_id}.md",
-            self.user_path / "memories"
-        ]
-        return all(path.exists() for path in required_paths)
+        # Base structural requirements: user dir + user.md file
+        if not self.user_path.exists():
+            return False
+        if not (self.user_path / f"{self.user_id}.md").exists():
+            return False
+        # At least one ontology entity dir must exist. ADR ON-004: never
+        # hardcode "memories" — that's a personal-ontology convention, not a
+        # system invariant. Corporate uses entities/people, entities/projects,
+        # etc. The hardcoded check made every corporate-ontology user appear
+        # un-onboarded and broke every write.
+        try:
+            entity_dirs = self.ontology.entity_dirs(self.user_path)
+            if any(d.exists() for d in entity_dirs):
+                return True
+        except Exception:
+            pass
+        # Personal-ontology fallback for repos that pre-date entity_dirs.
+        return (self.user_path / "memories").exists()
 
     def onboard_user(self, user_info: str, session_id: Optional[str] = None,
                      template: str = None) -> Dict[str, Any]:
@@ -423,15 +435,27 @@ class DiffMemory:
                 'repo_path': str(self.repo_path)
             }
 
+        # Base structural requirements
         required_paths = [
             self.user_path,
             self.user_path / f"{self.user_id}.md",
-            self.user_path / "memories"
         ]
-
         for path in required_paths:
             if not path.exists():
                 issues.append(f"Missing required path: {path}")
+
+        # ADR ON-004: entity dirs come from the ontology, not a hardcode.
+        try:
+            entity_dirs = self.ontology.entity_dirs(self.user_path)
+            if not any(d.exists() for d in entity_dirs):
+                # Personal-ontology fallback: legacy worktrees may use memories/
+                if not (self.user_path / "memories").exists():
+                    issues.append(
+                        f"No entity directories found. Expected one of: "
+                        f"{[str(d) for d in entity_dirs]}"
+                    )
+        except Exception as e:
+            warnings.append(f"Could not resolve entity dirs from ontology: {e}")
 
         master_index = self.user_path / "index.md"
         if not master_index.exists():
