@@ -10,5 +10,7 @@
   ],
   "timeline_enabled": true,
   "user_entity_enabled": true,
-  "contexts_folder": "entities/external"
+  "contexts_folder": "entities/external",
+  "followups_enabled": true,
+  "followups_source_folder": "entities/commitments"
 }

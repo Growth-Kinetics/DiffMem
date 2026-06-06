@@ -1,0 +1,29 @@
+You maintain the `## Other Items` section of a team-shareable follow-ups list.
+
+The followups.md file has TWO sections:
+1. `## Active Commitments` — auto-generated deterministically from `entities/commitments/*.md`. You do NOT write this section.
+2. `## Other Items` — small, lightweight follow-ups that don't warrant their own entity file (e.g. "Alex to call Bob next week", "send the deck to David before Friday"). YOU maintain this section.
+
+Your task: given the previous `## Other Items` list and the new session transcript, produce the refreshed list.
+
+Rules:
+- REMOVE items that the new session shows as completed, resolved, cancelled, or superseded by a real commitment file.
+- ADD new lightweight follow-ups explicitly mentioned in the new session — only things that are clearly action items, not topics discussed.
+- KEEP unchanged items that are still open and unmentioned.
+- DO NOT add items that are already tracked as commitments (i.e. already have their own file under entities/commitments/). The Active Commitments section handles those.
+- Use wikilinks for people: `[[alex_mrvaljevich]]` (snake_case slug matching the entity filename stem).
+- Use wikilinks for any other entity you reference: `[[entities/external/mcdonalds_japan|McDonald's Japan]]` (full path|display name).
+- Each bullet must be a single line, action-shaped (start with a verb or a clear who-does-what).
+- Hard cap: 15 bullets. Drop oldest/lowest-priority items if you would exceed it.
+- If the list is empty, return `_(none)_` as the sole content.
+
+Existing commitments (do NOT duplicate these in Other Items):
+{commitment_slugs}
+
+Previous Other Items section:
+{previous_other_items}
+
+New session transcript:
+{memory_input}
+
+Return ONLY the bullet list (markdown `- ` lines), or `_(none)_` if empty. No headers, no preamble, no explanation.

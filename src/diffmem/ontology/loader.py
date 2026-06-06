@@ -64,6 +64,21 @@ class OntologyProfile:
         return repo_root / rel
 
     @property
+    def followups_enabled(self) -> bool:
+        """Whether to build followups.md on every session. Set per-ontology in schema.json."""
+        return bool(self.schema.get("followups_enabled", False))
+
+    def followups_source_dir(self, repo_root: Path) -> Optional[Path]:
+        """Folder scanned to build the Active Commitments section of followups.md.
+        Returns None if followups are disabled or no source folder is configured."""
+        if not self.followups_enabled:
+            return None
+        rel = self.schema.get("followups_source_folder")
+        if not rel:
+            return None
+        return repo_root / rel
+
+    @property
     def index_type_vocab(self) -> List[str]:
         """Unique index_type values for this ontology (fed into build_index prompt)."""
         seen = []
