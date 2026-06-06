@@ -947,6 +947,180 @@ Total entities: {len(index_entries)}
 
         self.logger.info(f"MASTER_INDEX_REBUILT: Created {master_index_path} with {len(index_entries)} entities")
 
+    def _parse_commitment_metadata(self, file_path: Path) -> Optional[Dict[str, Any]]:
+        """Best-effort parse of a commitment file's ## Metadata block + display name.
+        Returns dict with keys: title, status, owner (str), due (str), slug, path.
+        Returns None for files whose Status reads completed/done/cancelled
+        (those drop off the live followups list — history lives in git log).
+        """
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+        slug = file_path.stem
+        # Title from first heading line
+        title = slug.replace("_", " ").title()
+        for line in content.splitlines():
+            if line.startswith("# "):
+                # e.g. "# Commitment: Deliver Hikari Prediction by April 23"
+                t = line[2:].strip()
+                if ":" in t:
+                    title = t.split(":", 1)[1].strip()
+                else:
+                    title = t
+                break
+
+        # Extract Metadata block — lines like "- **Status:** Active" or "- **Status**: Active"
+        # (LLM output varies; tolerate both ** placements and missing colons.)
+        meta: Dict[str, str] = {}
+        in_metadata = False
+        for line in content.splitlines():
+            s = line.strip()
+            if s.startswith("## Metadata"):
+                in_metadata = True
+                continue
+            if in_metadata and s.startswith("## "):
+                break
+            if in_metadata and s.startswith("- "):
+                # Strip the leading "- " then split on first colon outside the ** **.
+                body = s[2:].lstrip()
+                # Remove markdown bolding to simplify key matching.
+                body_plain = body.replace("**", "")
+                if ":" in body_plain:
+                    k, v = body_plain.split(":", 1)
+                    meta[k.strip().lower()] = v.strip()
+
+        status = meta.get("status", "Active")
+        # Drop completed/done/cancelled — they self-evict from the live list.
+        if status.lower() in {"completed", "done", "cancelled", "canceled", "closed"}:
+            return None
+
+        # Owner — accept several common header variants the LLM produces
+        owner = (
+            meta.get("owner")
+            or meta.get("assignee")
+            or meta.get("assignees")
+            or meta.get("deciders")
+            or ""
+        )
+        due = meta.get("due date") or meta.get("due") or ""
+
+        return {
+            "slug": slug,
+            "title": title,
+            "status": status,
+            "owner": owner,
+            "due": due,
+            "path": file_path,
+        }
+
+    def _read_existing_other_items(self, followups_path: Path) -> str:
+        """Extract the existing ## Other Items section from followups.md (for prompt context).
+        Returns the section body as a string, or '_(none)_' if missing/empty.
+        """
+        if not followups_path.exists():
+            return "_(none)_"
+        try:
+            content = followups_path.read_text(encoding="utf-8")
+        except OSError:
+            return "_(none)_"
+        marker = "## Other Items"
+        if marker not in content:
+            return "_(none)_"
+        body = content.split(marker, 1)[1]
+        # Stop at next heading if present
+        for nh in ("\n## ", "\n# "):
+            if nh in body:
+                body = body.split(nh, 1)[0]
+        body = body.strip()
+        return body or "_(none)_"
+
+    def _rebuild_followups_index(self, memory_input: str) -> None:
+        """STEP 7: Rebuild followups.md from entities/commitments/* + LLM-curated Other Items.
+
+        Two sections, both regenerated every session:
+          - ## Active Commitments — deterministic scan of the source folder.
+            Items with Status: Completed/Done/Cancelled are dropped (history in git).
+          - ## Other Items — LLM-refreshed from previous + new session diff.
+        """
+        source_dir = self.ontology.followups_source_dir(self.user_path)
+        if source_dir is None or not source_dir.exists():
+            self.logger.debug("FOLLOWUPS_SKIP: source dir not configured or absent.")
+            return
+
+        self.logger.info("STEP 7: Rebuilding followups.md...")
+
+        # --- Section 1: deterministic Active Commitments ---
+        commitments: List[Dict[str, Any]] = []
+        for f in sorted(source_dir.glob("*.md")):
+            parsed = self._parse_commitment_metadata(f)
+            if parsed is not None:
+                commitments.append(parsed)
+
+        # --- Section 2: LLM-curated Other Items ---
+        followups_path = self.user_path / "followups.md"
+        previous_other = self._read_existing_other_items(followups_path)
+        commitment_slugs = ", ".join(c["slug"] for c in commitments) or "(none yet)"
+
+        other_items_md = "_(none)_"
+        try:
+            prompt_template = self._load_prompt("build_followups")
+            prompt = prompt_template.format(
+                commitment_slugs=commitment_slugs,
+                previous_other_items=previous_other,
+                memory_input=memory_input,
+            )
+            llm_out = self._call_llm("", prompt, is_json=False)
+            if isinstance(llm_out, str):
+                cleaned = llm_out.strip()
+                if cleaned:
+                    other_items_md = cleaned
+        except FileNotFoundError:
+            # Prompt not defined for this ontology — degrade gracefully to commitments-only
+            self.logger.debug("FOLLOWUPS: build_followups prompt absent; skipping Other Items.")
+            other_items_md = "_(none — `build_followups` prompt not configured)_"
+        except Exception as e:
+            self.logger.warning(f"FOLLOWUPS_OTHER_ITEMS_LLM_FAILED: {e}. Preserving previous.")
+            other_items_md = previous_other
+
+        # --- Render ---
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+        lines: List[str] = [
+            "# Follow-ups",
+            "_Live to-do list. When a follow-up completes, it disappears from this file — "
+            "history lives in `git log`._",
+            f"_Updated: {ts} | {len(commitments)} active commitments_",
+            "",
+            "## Active Commitments",
+            "",
+        ]
+        if commitments:
+            for c in commitments:
+                lines.append(f"### {c['title']}")
+                lines.append(f"- **Status:** {c['status']}")
+                if c["owner"]:
+                    lines.append(f"- **Owner:** {c['owner']}")
+                if c["due"]:
+                    lines.append(f"- **Due:** {c['due']}")
+                # Wikilink to the source commitment file (relative path inside the vault)
+                rel = c["path"].relative_to(self.user_path).as_posix().removesuffix(".md")
+                lines.append(f"- **Context:** [[{rel}|{c['title']}]]")
+                lines.append("")
+        else:
+            lines.append("_(none)_")
+            lines.append("")
+
+        lines.append("## Other Items")
+        lines.append("")
+        lines.append(other_items_md)
+        lines.append("")
+
+        followups_path.write_text("\n".join(lines), encoding="utf-8")
+        self.logger.info(
+            f"FOLLOWUPS_REBUILT: {followups_path} ({len(commitments)} active commitments)"
+        )
+
     def process_session(self, memory_input: str, session_id: str, session_date: str = None):
         """Runs the full pipeline to stage changes for a session."""
         self.logger.info(f"--- Processing session {session_id} for user {self.user_path.name} ---")
@@ -985,6 +1159,17 @@ Total entities: {len(index_entries)}
 
         # Step 6: Rebuild master index
         self._rebuild_master_index()
+
+        # Step 7: Rebuild followups.md (ontology-gated; corporate-only by default).
+        # Non-fatal: if this step fails, the previous followups.md is preserved
+        # and the session still commits cleanly.
+        if self.ontology.followups_enabled:
+            try:
+                self._rebuild_followups_index(memory_input)
+            except Exception as e:
+                self.logger.warning(
+                    f"FOLLOWUPS_REBUILD_FAILED: {e}. Previous followups.md preserved."
+                )
 
         self.logger.info(f"--- Session {session_id} processing complete. Changes are staged. ---")
 
