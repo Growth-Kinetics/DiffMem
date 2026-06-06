@@ -705,8 +705,20 @@ class WriterAgent:
 
         return '\n'.join(result_lines)
 
-    def _build_single_entity_index(self, file_path: Path) -> Dict:
-        """Helper method to build semantic index for a single file (for parallel execution)."""
+    def _build_single_entity_index(self, file_path: Path,
+                                   git_stats: Optional[Dict[str, Any]] = None) -> Dict:
+        """Helper method to build semantic index for a single file (for parallel execution).
+
+        IMPORTANT (thread-safety): GitPython's persistent `cat-file --batch-check`
+        process is NOT thread-safe when a single Repo is shared across worker
+        threads. Calling `self._get_file_git_stats(...)` from inside a
+        ThreadPoolExecutor caused intermittent deadlocks where one worker would
+        block forever on a pipe.readline() in git/cmd.py:__get_object_header.
+
+        Callers in parallel paths MUST precompute git_stats in the parent
+        thread and pass them in. The inline fallback below remains for direct
+        callers; do not invoke this method concurrently without precomputed stats.
+        """
         try:
             # Read current file content
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -715,8 +727,10 @@ class WriterAgent:
             # Strip existing semantic index if present
             content_without_index = self._strip_existing_semantic_index(original_content)
 
-            # Get git stats
-            git_stats = self._get_file_git_stats(file_path)
+            # Use precomputed git stats when provided (thread-safe path);
+            # fall back to live lookup for non-parallel callers.
+            if git_stats is None:
+                git_stats = self._get_file_git_stats(file_path)
             memory_strength = self._calculate_memory_strength(
                 git_stats['number_of_edits'],
                 git_stats['last_update']
@@ -763,21 +777,43 @@ class WriterAgent:
             }
 
     def _build_entity_indexes(self, file_paths: List[Path]):
-        """STEP 5: Builds semantic indexes for modified entity files in parallel."""
+        """STEP 5: Builds semantic indexes for modified entity files in parallel.
+
+        Thread-safety: git stats are computed SERIALLY in this (parent) thread
+        before launching the executor. Worker threads receive precomputed stats
+        and never touch `self.repo`. This eliminates the GitPython
+        persistent-process deadlock that caused the writer agent to hang
+        indefinitely on workloads with multiple modified entity files. See
+        `_build_single_entity_index` docstring for the full rationale.
+        """
         if not file_paths:
             self.logger.info("No files to index.")
             return
 
-        self.logger.info(f"Building semantic indexes for {len(file_paths)} modified files in parallel...")
+        # Pre-compute git stats serially in the parent thread. This is the
+        # cheap part of the work; gitstats per file is microseconds, while the
+        # LLM call (which IS what we parallelize) takes seconds.
+        self.logger.info(
+            f"Pre-computing git stats for {len(file_paths)} files (serial)..."
+        )
+        precomputed_stats: Dict[Path, Dict[str, Any]] = {
+            fp: self._get_file_git_stats(fp) for fp in file_paths
+        }
 
-        # Process files in parallel
+        self.logger.info(
+            f"Building semantic indexes for {len(file_paths)} modified files in parallel..."
+        )
+
+        # Process files in parallel (LLM calls only; no shared git access)
         max_workers = min(len(file_paths), self.max_concurrent_llm_calls)
         results = []
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all indexing tasks
+            # Submit all indexing tasks with precomputed stats
             future_to_file = {
-                executor.submit(self._build_single_entity_index, file_path): file_path
+                executor.submit(
+                    self._build_single_entity_index, file_path, precomputed_stats[file_path]
+                ): file_path
                 for file_path in file_paths
             }
 
