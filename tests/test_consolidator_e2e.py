@@ -20,7 +20,7 @@ import pytest
 from tests._fixtures import FakeLLM, build_worktree, write_person
 
 from diffmem.api import DiffMemory
-from diffmem.consolidator_agent._shared import estimate_tokens
+from diffmem.consolidator_agent._shared import estimate_tokens, extract_semantic_index
 
 
 # --- fixture ------------------------------------------------------------------
@@ -343,7 +343,7 @@ def test_full_chain_smoke(monkeypatch, tmp_path: Path) -> None:
     # 3) New contexts file extracted.
     new_ctx = wt / "memories" / "contexts" / "project_x_methodology.md"
     assert new_ctx.exists()
-    assert "## SEMANTIC INDEX" in new_ctx.read_text(encoding="utf-8")
+    assert extract_semantic_index(new_ctx.read_text(encoding="utf-8")) is not None
 
     # 4) Wikilink in merged maya file (or lars).
     maya_post = (wt / "memories" / "people" / "maya_(acme).md").read_text(encoding="utf-8")

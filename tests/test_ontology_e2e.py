@@ -50,34 +50,41 @@ def test_personal_all_prompts_resolvable():
 # corporate profile — full validation
 # ---------------------------------------------------------------------------
 
-def test_corporate_has_five_entity_types():
+def test_corporate_has_four_entity_types():
+    """v2: corporate dropped commitments — 4 types (people, external, projects, decisions)."""
     p = load_ontology("corporate")
     names = [e["name"] for e in p.entity_types]
-    assert names == ["people", "projects", "decisions", "commitments", "external"]
+    assert names == ["people", "external", "projects", "decisions"]
+    assert "commitments" not in names
 
 def test_corporate_folder_map_uses_entities_prefix():
+    """v2: no commitments folder; the four folders use the entities/ prefix."""
     p = load_ontology("corporate")
     fm = p.folder_map
     assert fm["people"] == "entities/people"
     assert fm["projects"] == "entities/projects"
     assert fm["decisions"] == "entities/decisions"
-    assert fm["commitments"] == "entities/commitments"
     assert fm["external"] == "entities/external"
+    assert "commitments" not in fm
 
 def test_corporate_index_type_vocab():
+    """v2: index_type vocab has no 'commitment' — commitments demoted."""
     p = load_ontology("corporate")
     vocab = p.index_type_vocab
     assert "human" in vocab
+    assert "company" in vocab
     assert "project" in vocab
     assert "decision" in vocab
-    assert "commitment" in vocab
-    assert "company" in vocab
+    assert "commitment" not in vocab
 
 def test_corporate_repo_guide_mentions_all_entity_types():
+    """v2: repo_guide mentions the four types (commitments appears only as 'demoted')."""
     p = load_ontology("corporate")
-    content = p.repo_guide_path.read_text(encoding="utf-8")
-    for t in ["people", "projects", "decisions", "commitments", "external"]:
-        assert t in content.lower(), f"repo_guide.md missing '{t}'"
+    content = p.repo_guide_path.read_text(encoding="utf-8").lower()
+    for t in ["people", "projects", "decisions", "external"]:
+        assert t in content, f"repo_guide.md missing '{t}'"
+    # commitments is referenced only as the demoted concept, not as a type
+    assert "demoted commitments" in content or "no longer a top-level entity type" in content
 
 def test_corporate_overrides_identify_entities_prompt():
     """corporate should use its own 1_identify_entities, not the personal fallback."""
@@ -115,11 +122,11 @@ def test_corporate_overrides_build_index_prompt():
     resolved = p.resolve_prompt("build_index")
     assert "corporate" in str(resolved)
 
-def test_corporate_falls_back_for_system_prompt():
-    """0_system.txt is NOT overridden by corporate — falls back to writer_agent."""
+def test_corporate_overrides_system_prompt():
+    """v2: corporate now ships its own 0_system (company-lens frame), preferred over fallback."""
     p = load_ontology("corporate")
     resolved = p.resolve_prompt("0_system")
-    assert "writer_agent" in str(resolved)
+    assert "corporate" in str(resolved), "expected corporate-specific 0_system.txt"
 
 def test_corporate_falls_back_for_timeline_entry_prompt():
     """4_create_timeline_entry.txt not overridden by corporate."""
@@ -355,20 +362,21 @@ def test_corporate_snake_case_names_in_identify_prompt():
 
 
 def test_corporate_snake_case_names_in_build_index_prompt():
-    """Bug A: corporate build_index prompt must use snake_case example name."""
+    """v2: corporate build_index prompt uses snake_case neutral example names (no PascalCase)."""
     p = load_ontology("corporate")
     content = p.resolve_prompt("build_index").read_text()
     assert "AliceSmith" not in content
-    assert "alice_smith" in content
+    assert "snake_case" in content or "atlas" in content.lower()
+    assert "maya_rivera" in content or "atlas" in content.lower()
 
 
 def test_corporate_repo_guide_snake_case():
-    """Bug A: corporate repo_guide must document snake_case, not PascalCase."""
+    """v2: corporate repo_guide documents snake_case using neutral examples (no PascalCase)."""
     p = load_ontology("corporate")
     content = p.repo_guide_path.read_text()
     assert "PascalCase" not in content
     assert "snake_case" in content
-    assert "alice_smith" in content
+    assert "maya_rivera" in content or "atlas" in content.lower()
 
 
 def test_contexts_folder_personal():

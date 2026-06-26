@@ -95,10 +95,111 @@ def test_personal_followups_disabled():
     assert p.followups_source_dir(Path("/x")) is None
 
 
-def test_corporate_followups_source_dir_resolves():
-    """Corporate followups_source_dir resolves under the worktree root."""
-    p = load_ontology("corporate")
-    assert p.followups_source_dir(Path("/wt")) == Path("/wt/entities/commitments")
+def _entity_with_open_items(parent: Path, filename: str, entity_title: str,
+                             open_items: list, fm_type: str = "project") -> Path:
+    """Write an entity file with a `## Open Items` section.
+
+    open_items: list of (status, title, owner, due) tuples. owner/due may be ''.
+    """
+    f = parent / f"{filename}.md"
+    body = [
+        "---",
+        f"type: {fm_type}",
+        f"title: {entity_title}",
+        "status: active",
+        "---",
+        "",
+        f"# {entity_title}",
+        "",
+        "## Open Items",
+        "",
+    ]
+    for status, title, owner, due in open_items:
+        line = f"- **[{status}]** {title}"
+        if owner:
+            line += f" — assignee [[{owner}]]"
+        if due:
+            line += f", due {due}"
+        body.append(line)
+    body.append("")
+    f.write_text("\n".join(body), encoding="utf-8")
+    return f
+
+
+def test_rebuild_aggregates_open_items_across_entities(tmp_path):
+    """Active Items aggregates ## Open Items entries from multiple entity files."""
+    agent = _make_corporate_writer(tmp_path)
+    # NOTE: no entities/commitments folder is created — v2 has no such folder.
+    projects = tmp_path / "entities" / "projects"
+    projects.mkdir(parents=True, exist_ok=True)
+    _entity_with_open_items(projects, "atlas", "Project Atlas",
+                            [("open", "Deliver v1 API", "maya_rivera", "2026-07-15"),
+                             ("in_progress", "Build capacity signals", "sam_rivera", "")])
+    people = tmp_path / "entities" / "people"
+    people.mkdir(parents=True, exist_ok=True)
+    _entity_with_open_items(people, "maya_rivera", "Maya Rivera",
+                            [("open", "Send deck to Northwind", "", "")],
+                            fm_type="human")
+
+    with patch.object(agent, "_call_llm", return_value="_(none)_"):
+        agent._rebuild_followups_index("transcript")
+
+    out = (tmp_path / "followups.md").read_text(encoding="utf-8")
+    assert "## Active Items" in out
+    assert "Deliver v1 API" in out
+    assert "Build capacity signals" in out
+    assert "Send deck to Northwind" in out
+    assert "3 active items" in out
+    # Each item links back to its owning entity.
+    assert "[[entities/projects/atlas|Project Atlas]]" in out
+    assert "[[entities/people/maya_rivera|Maya Rivera]]" in out
+
+
+def test_rebuild_self_evicts_done_and_cancelled(tmp_path):
+    """Open Items with terminal status (done/cancelled) drop from the live list."""
+    agent = _make_corporate_writer(tmp_path)
+    projects = tmp_path / "entities" / "projects"
+    projects.mkdir(parents=True, exist_ok=True)
+    _entity_with_open_items(projects, "atlas", "Project Atlas",
+                            [("open", "Deliver v1 API", "", ""),
+                             ("done", "Ship landing page", "", ""),
+                             ("cancelled", "Old POC idea", "", "")])
+    with patch.object(agent, "_call_llm", return_value="_(none)_"):
+        agent._rebuild_followups_index("transcript")
+
+    out = (tmp_path / "followups.md").read_text(encoding="utf-8")
+    assert "Deliver v1 API" in out
+    assert "Ship landing page" not in out
+    assert "Old POC idea" not in out
+    assert "1 active items" in out
+
+
+def test_rebuild_renders_none_when_no_open_items(tmp_path):
+    """No Open Items anywhere → Active Items shows the _(none)_ placeholder."""
+    agent = _make_corporate_writer(tmp_path)
+    projects = tmp_path / "entities" / "projects"
+    projects.mkdir(parents=True, exist_ok=True)
+    _entity_with_open_items(projects, "atlas", "Project Atlas",
+                            [("done", "Finished task", "", "")])  # only terminal
+    with patch.object(agent, "_call_llm", return_value="_(none)_"):
+        agent._rebuild_followups_index("transcript")
+
+    out = (tmp_path / "followups.md").read_text(encoding="utf-8")
+    assert "## Active Items\n\n_(none)_" in out
+    assert "0 active items" in out
+
+
+def test_rebuild_works_without_commitments_folder(tmp_path):
+    """v2: followups rebuild works when no entities/commitments folder exists at all."""
+    agent = _make_corporate_writer(tmp_path)
+    # _make_corporate_writer created entities/commitments per old onboarding; remove it.
+    import shutil
+    shutil.rmtree(tmp_path / "entities" / "commitments")
+    with patch.object(agent, "_call_llm", return_value="_(none)_"):
+        agent._rebuild_followups_index("transcript")  # must not raise
+    out = (tmp_path / "followups.md").read_text(encoding="utf-8")
+    assert "## Active Items" in out
+    assert "## Other Items" in out
 
 
 # ---------------------------------------------------------------------------
@@ -109,15 +210,15 @@ def test_parser_extracts_title_status_owner_due(tmp_path):
     agent = _make_corporate_writer(tmp_path)
     commitments_dir = tmp_path / "entities" / "commitments"
     f = _commitment_file(
-        commitments_dir, "deliver_qbr", "Deliver McDonald's QBR by May",
-        status="In Progress", owner="[[benjamin_powell]]", due="Early May 2026",
+        commitments_dir, "deliver_qbr", "Deliver Northwind QBR by May",
+        status="In Progress", owner="[[sam_rivera]]", due="Early May 2026",
     )
     parsed = agent._parse_commitment_metadata(f)
     assert parsed is not None
     assert parsed["slug"] == "deliver_qbr"
-    assert parsed["title"] == "Deliver McDonald's QBR by May"
-    assert parsed["status"] == "In Progress"
-    assert parsed["owner"] == "[[benjamin_powell]]"
+    assert parsed["title"] == "Deliver Northwind QBR by May"
+    assert parsed["status"] == "in_progress"  # v2: canonicalized to the open_item enum
+    assert parsed["owner"] == "[[sam_rivera]]"
     assert parsed["due"] == "Early May 2026"
 
 
@@ -162,36 +263,13 @@ def test_parser_tolerates_field_name_variants(tmp_path):
 # Full rebuild
 # ---------------------------------------------------------------------------
 
-def test_rebuild_renders_active_commitments_section(tmp_path):
-    agent = _make_corporate_writer(tmp_path)
-    cdir = tmp_path / "entities" / "commitments"
-    _commitment_file(cdir, "c_a", "Deliver A", "Active", "[[alex]]", "2026-04-23")
-    _commitment_file(cdir, "c_b", "Build B", "In Progress", "[[bob]]", "Q2 2026")
-    _commitment_file(cdir, "c_done", "Old C", "Completed", "[[alex]]", "2026-01-01")
-
-    with patch.object(agent, "_call_llm", return_value="- alex to ping carol\n- send deck"):
-        agent._rebuild_followups_index("transcript body here")
-
-    out = (tmp_path / "followups.md").read_text(encoding="utf-8")
-    assert "# Follow-ups" in out
-    assert "## Active Commitments" in out
-    assert "Deliver A" in out
-    assert "Build B" in out
-    assert "Old C" not in out, "Completed commitment must NOT appear in live list"
-    assert "## Other Items" in out
-    assert "alex to ping carol" in out
-    assert "2 active commitments" in out
-
-
 def test_rebuild_uses_existing_other_items_when_llm_fails(tmp_path):
     """If the LLM call raises, the previous Other Items section is preserved."""
     agent = _make_corporate_writer(tmp_path)
-    cdir = tmp_path / "entities" / "commitments"
-    _commitment_file(cdir, "c_a", "A", "Active", "[[alex]]", "")
 
-    # Seed a previous followups.md
+    # Seed a previous followups.md with Other Items.
     (tmp_path / "followups.md").write_text(
-        "# Follow-ups\n\n## Active Commitments\n\n_(none)_\n\n"
+        "# Follow-ups\n\n## Active Items\n\n_(none)_\n\n"
         "## Other Items\n\n- previous item one\n- previous item two\n",
         encoding="utf-8",
     )
@@ -205,30 +283,6 @@ def test_rebuild_uses_existing_other_items_when_llm_fails(tmp_path):
     out = (tmp_path / "followups.md").read_text(encoding="utf-8")
     assert "previous item one" in out, "Previous Other Items must be preserved on LLM failure"
     assert "previous item two" in out
-
-
-def test_rebuild_writes_none_when_no_commitments_and_no_other(tmp_path):
-    agent = _make_corporate_writer(tmp_path)
-    with patch.object(agent, "_call_llm", return_value="_(none)_"):
-        agent._rebuild_followups_index("transcript")
-    out = (tmp_path / "followups.md").read_text(encoding="utf-8")
-    assert "0 active commitments" in out
-    # Active Commitments section must render the empty placeholder
-    assert "## Active Commitments\n\n_(none)_" in out
-
-
-def test_rebuild_includes_wikilink_to_source_file(tmp_path):
-    """Each rendered commitment must have a Context wikilink pointing back to its file."""
-    agent = _make_corporate_writer(tmp_path)
-    cdir = tmp_path / "entities" / "commitments"
-    _commitment_file(cdir, "deliver_hikari", "Deliver Hikari", "Active",
-                     "[[david]]", "2026-04-23")
-
-    with patch.object(agent, "_call_llm", return_value="_(none)_"):
-        agent._rebuild_followups_index("transcript")
-
-    out = (tmp_path / "followups.md").read_text(encoding="utf-8")
-    assert "[[entities/commitments/deliver_hikari|Deliver Hikari]]" in out
 
 
 # ---------------------------------------------------------------------------

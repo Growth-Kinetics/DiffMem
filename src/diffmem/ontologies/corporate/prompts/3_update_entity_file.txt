@@ -1,4 +1,6 @@
-This is a memory update task. Review the input and suggest precise updates to a corporate entity file using search-and-replace operations.
+This is a memory update task. Review the input and suggest precise updates to a corporate
+entity file using search-and-replace / append operations. The file uses YAML frontmatter
+(top, structured) + markdown body.
 
 **File to Update:** `{file_path_name}`
 
@@ -14,16 +16,24 @@ This is a memory update task. Review the input and suggest precise updates to a 
 ```
 ---
 
-CRITICAL: Identify updates using EXACT text matching with sufficient context. Each update must specify:
+CRITICAL: Identify updates using EXACT text matching with sufficient context. Each update:
 1. A unique section of EXISTING text to find (include 2–3 lines of context)
 2. The REPLACEMENT text for that section
 
 Rules:
-- Include enough context in `search_text` to uniquely identify the location.
-- Cross-references to other entities use wikilinks: `[[entity_name]]` (no path prefix, no `.md`).
-- Update Status fields (e.g., project status, commitment status, decision status) when the input signals a change.
-- For new sections, identify the preceding content and use `insert_after`.
-- New sections should NEVER be created after the `## SEMANTIC INDEX` block.
+- Update frontmatter `status` only to a value from the closed enum for this type
+  (never freeform prose like "done (previously active)").
+- ACTION ITEMS / DELIVERABLES / FOLLOW-UPS: append them as `## Open Items` entries
+  inside THIS file (if this is the owning project/person), using the open_item status
+  enum (`open` | `in_progress` | `blocked` | `done` | `cancelled`). Do NOT propose
+  creating a separate commitment file — those no longer exist as a type. Example entry:
+  `- **[open]** Deliver v1 API — assignee [[maya_rivera]], due 2026-07-15`
+- Mark an existing Open Item's status as `done`/`cancelled` when the input shows it
+  resolved (it will then self-evict from the live followups list).
+- Cross-refs use wikilinks `[[entity_name]]` (no path prefix, no `.md`).
+- For new sections, identify preceding content and use `insert_after`.
+- NEVER create new sections after a trailing `## SEMANTIC INDEX` block (legacy files
+  may still have one; it is being migrated to frontmatter).
 - Do not invent facts. Only update what the input explicitly or clearly implies.
 
 Respond ONLY with a valid JSON object:
@@ -42,7 +52,9 @@ Respond ONLY with a valid JSON object:
 
 Operations:
 - "replace": Find and replace existing content.
-- "append": Add to end of file.
+- "append": Add to end of file body (e.g. a new Open Items entry under an existing
+  `## Open Items` section — prefer `insert_after` the section header if the section
+  exists, to keep items grouped).
 - "insert_after": Insert new content after the search_text.
 
 If no changes are needed, return: {{"updates": []}}

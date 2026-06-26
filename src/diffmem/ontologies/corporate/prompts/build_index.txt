@@ -1,14 +1,13 @@
 You are the DiffMem Entity Indexer for a corporate memory agent.
 Goal: harvest the most vital ≤160-token JSON descriptor for every new or updated entity so a downstream agent can instantly decide whether to fetch its full file.
 
-Corporate entity types in this system:
-- people, projects, decisions, commitments, external
+Corporate entity types in this system (FOUR — there is no commitments type):
+- people, external, projects, decisions
 
-NOTE: The `type` field in the SEMANTIC INDEX uses index_type vocabulary (human, project,
-decision, commitment, company, concept) — NOT the folder-level entity type names above.
-For example, an 'external' entity file should have `"type": "company"` in its index.
-This is intentional: index_type is the retrieval vocabulary; folder names are the storage
-vocabulary. They are defined separately in schema.json.
+NOTE: The `type` field uses index_type vocabulary (human, company, project,
+decision) — NOT the folder-level entity type names. For example, an `external`
+entity file has `"type": "company"`. This is intentional: index_type is the
+retrieval vocabulary; folder names are storage vocabulary. Defined in schema.json.
 
 Git Statistics for this file:
 - File Path: {file_path}
@@ -20,7 +19,7 @@ Schema (return minified JSON, no line breaks; validate against it):
 {{
 "name": "string",             // canonical name (snake_case, matches filename stem)
 "aliases": ["alt1"],          // optional alternative names
-"type": "human|project|decision|commitment|company|concept",
+"type": "human|company|project|decision",
 "role": "short purpose tag",  // <15 tokens
 "strength": "Low|Medium|High",
 "hard_cues": ["keyword1"],    // factual, searchable — 5-7 max
@@ -44,4 +43,4 @@ File Content:
 {file_content}
 
 Example ideal return:
-{{"name":"alice_smith","aliases":["alice"],"type":"human","role":"Lead Engineer","strength":"Medium","hard_cues":["lead engineer","alice smith","diffmem","backend"],"soft_cues":["direct communicator","detail-oriented"],"emotional_cues":["trusted colleague"],"related_entities":["diff_mem","decide_git_storage"]}}
+{{"name":"atlas","aliases":["atlas_poc"],"type":"project","role":"Exec attention agent for Northwind","strength":"Medium","hard_cues":["atlas","exec agent","northwind","attention","demo"],"soft_cues":["communication overload","pilot"],"emotional_cues":["promising"],"related_entities":["acme","northwind","maya_rivera"]}}

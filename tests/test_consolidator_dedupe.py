@@ -15,6 +15,7 @@ import pytest
 from tests._fixtures import FakeLLM, build_worktree, write_person
 
 from diffmem.consolidator_agent.agent import ConsolidatorAgent
+from diffmem.consolidator_agent._shared import extract_semantic_index
 
 
 # --- helpers ------------------------------------------------------------------
@@ -126,11 +127,11 @@ def test_two_mayas_merge(tmp_path: Path) -> None:
     assert survivor.exists(), "survivor file should remain"
     assert not loser.exists(), "loser file should be git-removed"
 
-    # Alias preserved in survivor's SEMANTIC INDEX.
+    # Alias preserved in survivor's structured metadata (frontmatter in v2;
+    # legacy files carry a trailing SEMANTIC INDEX block — extract handles both).
     content = survivor.read_text(encoding="utf-8")
-    assert "## SEMANTIC INDEX" in content
-    si_line = content.split("## SEMANTIC INDEX", 1)[1].strip().splitlines()[0]
-    si = json.loads(si_line)
+    si = extract_semantic_index(content)
+    assert si is not None, "survivor must carry structured metadata"
     assert "maya" in si.get("aliases", []), f"aliases must include 'maya', got {si.get('aliases')}"
 
     # Commit message matches the protocol.

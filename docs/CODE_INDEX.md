@@ -9,6 +9,9 @@ src/diffmem/             — Core package (importable as a library or run as a s
   api.py                 — DiffMemory class: public Python API surface, delegates to agents
   repo_manager.py        — Worktree lifecycle (mount/unmount), post-commit hook install,
                            list_active_users()
+  frontmatter.py         — YAML frontmatter parse/merge; v2 home for structured entity metadata
+  status.py              — canonicalize_status(): code-owned freeform→enum status normalization
+  conformance.py         — check_conformance(): flags frontmatter/folder type mismatches
   writer_agent/          — Synchronous LLM pipeline: identifies entities, stages + commits
     agent.py             —   WriterAgent: process_session(), commit_session()
     onboarding_agent.py  —   OnboardingAgent: first-time user setup
@@ -19,8 +22,11 @@ src/diffmem/             — Core package (importable as a library or run as a s
     baseline.py          —   load_baseline(), load_user_entity(), load_recent_timeline()
     resolver.py          —   resolve_pointers(): converts RetrievalPlan → context blocks
     prompts/             —   Prompt files for retrieval agent
-  consolidator_agent/    — Out-of-band repair pass: dedupe, redistribute, link
-    agent.py             —   ConsolidatorAgent: run_dedupe(), run_redistribute(), run_link()
+  consolidator_agent/    — Out-of-band repair pass: reabsorb (v2 migration), dedupe, redistribute, link
+    agent.py             —   ConsolidatorAgent: run_reabsorb(), run_dedupe(), run_redistribute(), run_link()
+    _reabsorb.py         —   Deterministic, no-LLM: folds legacy entities/commitments/ → owner `## Open Items`
+    _dedupe.py / _redistribute.py / _link.py — the three repair tools
+    _shared.py          —   extract_semantic_index() (prefers frontmatter, falls back to legacy block)
     lock.py              —   ConsolidatorLock context manager + LockBusyError
     prompts/             —   Prompt files for consolidator tools (populated in M2–M4)
   storage/               — Pluggable storage + backup backends
@@ -86,8 +92,10 @@ pyproject.toml           — Package metadata and dependencies
   `WriterAgent` (prompt resolution, folder map), `OnboardingAgent` (dir creation,
   repo_guide copy), and `run_retrieval_agent()` (folder listing in system prompt)
 - **Consolidation pipeline:** `consolidator_agent/agent.py` →
-  `ConsolidatorAgent.run_dedupe()` / `run_redistribute()` / `run_link()`.
-  Commits use the `consolidate(...)` prefix.
+  `ConsolidatorAgent.run_reabsorb()` (migration-only) / `run_dedupe()` /
+  `run_redistribute()` / `run_link()`. Commits use the `consolidate(...)` prefix.
+  `reabsorb` is excluded from the default run set; canonical order when
+  chained is reabsorb → dedupe → redistribute → link.
 - **Consolidate API:** `DiffMemory.consolidate(tools, window, soft_cap_tokens)`
   and `DiffMemory.process_commit_and_consolidate(...)` in `api.py`.
 - **Consolidate HTTP:** `POST /memory/{user_id}/consolidate` and
@@ -117,5 +125,6 @@ pyproject.toml           — Package metadata and dependencies
 5. **Consolidate (out-of-band):** `POST /memory/{id}/consolidate` →
    `app.state.executor.submit_consolidate()` → (inline pool or hatchet worker) →
    `DiffMemory.consolidate()` → acquire `.diffmem/consolidator.lock` per tool →
-   dedupe → redistribute → link → each tool produces `consolidate(...)`-prefixed
-   commits → fire-and-forget backup of the new commits.
+   reabsorb (if requested) → dedupe → redistribute → link → each tool produces
+   `consolidate(...)`-prefixed commits → fire-and-forget backup of the new commits.
+   `reabsorb` is opt-in (not in the default run set).

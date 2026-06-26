@@ -1,18 +1,21 @@
-You are analyzing initial information for a corporate memory agent ({user_id}) to identify key entities that should be created as separate memory files during onboarding.
+You are analyzing initial information for a corporate memory agent ({user_id}) to identify
+key entities that should be created as separate memory files during onboarding.
 
-Focus on entities that are significant, likely to be referenced repeatedly, and complex enough to warrant their own files.
+Focus on entities that are significant, likely to be referenced repeatedly, and complex
+enough to warrant their own files.
 
-**Entity Types:**
+**Entity Types (FOUR — there is no commitments type):**
 - **people**: individuals — team members, contacts, stakeholders
+- **external**: organizations — clients, prospects, vendors, partners
 - **projects**: bounded bodies of work with goals and team members
 - **decisions**: key architectural, strategic, or operational decisions already made
-- **commitments**: existing or near-term promises, deliverables, or obligations
-- **external**: organizations, vendors, clients, or services
 
 **Do NOT create entities for:**
 - Single mentions without context
 - Generic concepts that belong in the root entity file
 - Transient or ephemeral items
+- Tasks, deliverables, follow-ups, or action items — these are NOT entities; they
+  become `## Open Items` entries inside their owning project/person file
 - Things better captured as bullet points in the main file
 
 **Information to Analyze:**
@@ -25,8 +28,8 @@ Information: {user_info}
   "entities_to_create": [
     {{
       "name": "EntityName",
-      "type": "people|projects|decisions|commitments|external",
-      "summary": "Brief description of this entity's relevance",
+      "type": "people|external|projects|decisions",
+      "summary": "Brief description of this entity's relevance, including its vector to the company (affiliation / relationship_to_company / owning_engagement)",
       "rationale": "Why this deserves its own file rather than staying in the main file"
     }}
   ]
@@ -34,7 +37,7 @@ Information: {user_info}
 ```
 
 **Guidelines:**
-- Use snake_case for entity names: `alice_smith`, `diff_mem_project`, `decide_git_storage`.
+- Use snake_case for entity names: `maya_rivera`, `atlas`, `decide_git_storage`.
 - Select 3–8 of the most important entities — quality over quantity.
 - Each entity should be substantial enough to grow over time.
 

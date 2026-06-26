@@ -1,47 +1,68 @@
-Your objective is to evaluate the input and identify entities for creating or updating memory files.
+Your objective: evaluate the input and identify entities to create or update.
 
-Entity kinds:
-- **people**      : individual persons — internal team members, external contacts, stakeholders.
-- **projects**    : bounded bodies of work with goals, owners, and team members.
-- **decisions**   : architectural, strategic, or operational decisions (ADR-style).
-- **commitments** : promises, deliverables, obligations, or milestones someone is accountable for.
-- **external**    : external organizations, vendors, clients, or API services.
+Entity kinds (four only — there is NO commitments type):
+- **people**    : individuals — internal team members, external contacts, stakeholders.
+- **external**  : organizations — clients, prospects, vendors, partners.
+- **projects**  : bounded bodies of work with goals, an owner, and a team.
+- **decisions** : architectural, strategic, or operational decisions (ADR-style).
 
-Rules (in priority order):
-1. Name stability: treat spelling variations of existing names as an update to the same entity (≥80% string similarity).
-2. Create sparingly: propose NEW only if the entity is clearly distinct, is central to the input, and needs multi-field storage. Ignore passing references to generic things.
-3. Decisions: auto-generate a descriptive snake_case filename e.g. `decide_git_storage`, `choose_deployment_platform`.
-4. Commitments: use a descriptive snake_case slug e.g. `deliver_v1_api`, `review_contract_by_friday`.
-5. Ignore entities in the existing index that are not mentioned in the input.
-6. If nothing actionable, return empty lists.
+GRANULARITY GATE (in priority order — the most important rules in this prompt):
+1. An entity warrants its OWN FILE only if it has ALL THREE of: independent
+   identity, multi-session evolution potential, and multi-field storage need.
+   A passing reference to a person or org is an UPDATE, not a new file.
+2. NEVER create a file for a task, deliverable, milestone, follow-up, or
+   action item. There is no commitments type. Instead, route every such item to
+   its owner — almost always the owning PROJECT, occasionally the owning PERSON
+   for a personal follow-up — by adding it to that owner's `entities_to_update`.
+   The update step will append it as a `## Open Items` entry. This is how the
+   system tracks to-dos; standalone item files are forbidden.
+3. Analysis work, investigations, and POCs are PROJECTS (or updates to an
+   existing project), not commitments. Bucket them as projects.
+4. Name stability: treat spelling variations of an existing name as an UPDATE
+   to the same entity (≥80% string similarity).
+5. Create sparingly: propose NEW only if clearly distinct, central to the
+   input, and needing multi-field storage. When in doubt, update an existing
+   entity rather than create.
+6. Decisions: auto-generate a descriptive snake_case slug, e.g. `decide_git_storage`.
+7. Ignore entities in the existing index that are not mentioned in the input.
+8. If nothing actionable, return empty lists.
 
-NOTE: The type names below (people, projects, decisions, commitments, external) are
-folder-level storage types used to route entity files to the right directory. They
-are distinct from the SEMANTIC INDEX `type` field (human, project, decision,
-commitment, company), which is the retrieval vocabulary written by build_index.
-Always use the folder-level type names in this prompt's output.
+Company lens: when creating an external or project, you SHOULD note (in the
+summary) its vector to the company — for external: client/prospect/vendor/partner
+and rough revenue weight; for projects: the owning engagement (client slug or
+"internal") and priority. For people, note affiliation (internal/external-at:<client>).
+
+NOTE: the type names (people, external, projects, decisions) are folder-level
+storage types. The SEMANTIC INDEX `type` field (human, company, project, decision)
+is written separately by build_index. Always use the folder-level type names here.
 
 Your JSON reply — valid, single-line summary in `summary`:
 ```json
 {{
   "entities_to_create": [
-    {{"name":"alice_smith","type":"people","summary":"Lead engineer joining the DiffMem project"}},
-    {{"name":"diff_mem","type":"projects","summary":"Git-based memory backend for AI agents"}},
-    {{"name":"decide_git_storage","type":"decisions","summary":"Decision to use Git as the primary storage layer"}},
-    {{"name":"deliver_v1_api","type":"commitments","summary":"Commitment to deliver the v1 API by end of quarter"}},
-    {{"name":"stripe_payments","type":"external","summary":"Payment processing vendor for the platform"}}
+    {{"name":"maya_rivera","type":"people","summary":"Lead engineer; internal, 1.0 allocation"}},
+    {{"name":"atlas","type":"projects","summary":"Exec attention agent for client northwind (active_client); high priority"}},
+    {{"name":"decide_git_storage","type":"decisions","summary":"Decided to use git as the primary storage layer"}}
   ],
   "entities_to_update": [
-    {{"name":"BobJones","type":"people"}}
+    {{"name":"atlas","type":"projects"}},
+    {{"name":"maya_rivera","type":"people"}}
   ]
 }}
 ```
 
-NOTE: For entities_to_update, only provide name and type. The file path will be automatically resolved from the semantic index.
+The `entities_to_update` list is where action items land: if the input mentions a
+deliverable or follow-up owned by project X, add {{"name":"X","type":"projects"}} to
+entities_to_update (the update step appends it to X's Open Items). Do NOT create a
+commitment file for it.
 
-If no entities need creation or updates, return empty lists: {{"entities_to_create": [], "entities_to_update": []}}
+NOTE: For entities_to_update, only provide name and type. The file path is resolved
+automatically from the semantic index.
 
-To determine if an entity is new or requires editing, refer to the following semantic index of all entities in this agent's memory:
+If no entities need creation or updates, return: {{"entities_to_create": [], "entities_to_update": []}}
+
+To determine if an entity is new or requires editing, refer to the following
+semantic index of all entities in this agent's memory:
 ---
 EXISTING ENTITIES SEMANTIC INDEX:
 {semantic_index}
