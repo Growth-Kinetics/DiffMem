@@ -156,6 +156,25 @@ def test_v2_pipeline_reduces_commitments_and_passes_conformance(tmp_path):
     assert reduction >= 0.80, f"expected >=80% reduction, got {reduction:.0%} ({remaining} left)"
     assert remaining == 0, "all legacy commitments should be folded+removed"
 
+    # --- 1b. REGRESSION: the Open Items payload must be COMMITTED, not left
+    #     as dirty working-tree changes. repo.index.commit() snapshots the
+    #     index; if the owner file is never staged, the migration silently
+    #     drops every folded entry (and a worktree reset discards it).
+    repo = git.Repo(wt)
+    assert repo.git.status("--porcelain") == "", (
+        "reabsorb left uncommitted working-tree changes: "
+        f"{repo.git.status('--porcelain')!r}"
+    )
+    # Assert against COMMITTED state (HEAD), not the working tree.
+    atlas_head = repo.git.show("HEAD:entities/projects/atlas.md")
+    assert "## Open Items" in atlas_head, "Open Items section missing from committed atlas.md"
+    assert "Deliver v1 API" in atlas_head, "folded entry missing from committed atlas.md"
+    # The runtime lock must never be committed into user history.
+    head_files = repo.git.show("HEAD", "--name-only", "--format=").split()
+    assert not any(".diffmem" in f for f in head_files), (
+        f"runtime lock leaked into commit: {head_files}"
+    )
+
     # --- 2. conformance: remaining entity files all conform ---
     p = load_ontology("corporate")
     violations = check_conformance(wt, p)

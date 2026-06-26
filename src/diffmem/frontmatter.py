@@ -50,11 +50,9 @@ def parse_frontmatter(content: str) -> Tuple[Optional[Dict[str, Any]], str]:
         logger.warning("FRONTMATTER_PARSE_FAIL: err=%s", e)
         return None, content
     if not isinstance(fm, dict):
-        fm = {} if fm is None else {}
+        # Non-mapping YAML (scalar, list, or empty) → treat as empty frontmatter.
+        fm = {}
     body = "\n".join(lines[body_start:])
-    # Preserve a single leading newline separation if the original had one.
-    if body and not body.startswith("\n"):
-        body = body
     return fm, body.lstrip("\n")
 
 

@@ -81,8 +81,12 @@ def _resolve_owner(related: List[str], entity_dirs: List[Path], repo_root: Path,
     for d in entity_dirs:
         if d not in prioritised:
             prioritised.append(d)
-    for slug in related:
-        for d in prioritised:
+    # Folder priority must dominate slug order: check ALL slugs against projects
+    # first, then all against people, etc. (Nesting slugs outer would let an
+    # assignee person win over the owning project purely because the assignee
+    # wikilink is parsed before the related-project wikilink.)
+    for d in prioritised:
+        for slug in related:
             for cand in _slug_to_path_candidates(slug, [d]):
                 if cand.exists():
                     return cand, slug
@@ -174,12 +178,24 @@ def run(
         except Exception as e:
             logger.warning("REABSORB_APPEND_FAIL: owner=%s err=%s", owner_path, e)
             continue
+        # Stage the owner-file edit. repo.index.commit() snapshots the INDEX, not
+        # the working tree — without this the Open Items entry (the migration
+        # payload) is left as an unstaged dirty change and silently discarded.
+        owner_rel = str(owner_path.relative_to(worktree))
+        repo.git.add(owner_rel)
+        # Remove the source commitment file. `git rm` fails if the file was never
+        # tracked (e.g. freshly generated, not yet committed); fall back to a
+        # filesystem unlink + stage of just that path (never `add --all`, which
+        # would sweep the runtime .diffmem/ lock into user history).
         rel = str(cf.relative_to(worktree))
         try:
             repo.git.rm(rel)
         except Exception:
             cf.unlink(missing_ok=True)
-            repo.git.add("--all")
+            try:
+                repo.git.add(rel)  # stage the deletion of this path only
+            except Exception:
+                pass
         msg = f"{COMMIT_PREFIX} {cf.stem} → {owner_path.stem}"
         repo.index.commit(msg)
         commit_msgs.append(msg)

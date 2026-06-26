@@ -52,6 +52,10 @@ _SYNONYMS = [
     ("pending", "open"),
     ("open", "open"),
     ("active", "active"),
+    # open_item fallback: "active" is not in the open_item enum, so when the
+    # primary ("active","active") mapping above is skipped (canonical not in
+    # this type's enum) the scan reaches here and resolves to in_progress.
+    ("active", "in_progress"),
     ("accepted", "accepted"),       # decisions
     ("decided", "accepted"),
     # person lifecycle
