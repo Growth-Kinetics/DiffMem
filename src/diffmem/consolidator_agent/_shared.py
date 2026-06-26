@@ -14,6 +14,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..frontmatter import (
+    parse_frontmatter,
+    merge_frontmatter,
+    strip_legacy_semantic_index as _strip_legacy_block,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,11 +48,20 @@ def relative_entity_path(worktree: Path, file_path: Path) -> str:
 # --- semantic index extraction ------------------------------------------------
 
 
-SEMANTIC_INDEX_HEADER = "## SEMANTIC INDEX"
+SEMANTIC_INDEX_HEADER = "## SEMANTIC INDEX"  # legacy trailing-block header
 
 
 def extract_semantic_index(content: str) -> Optional[Dict[str, Any]]:
-    """Parse the trailing `## SEMANTIC INDEX` JSON block. Returns None if absent."""
+    """Return the entity's structured descriptor (the 'semantic index').
+
+    Prefers YAML frontmatter (the v2 location); falls back to the legacy
+    trailing `## SEMANTIC INDEX` JSON block for files not yet migrated.
+    Returns None only when NEITHER is present.
+    """
+    fm, _ = parse_frontmatter(content)
+    if fm is not None:
+        return fm
+    # Legacy trailing-block fallback.
     if SEMANTIC_INDEX_HEADER not in content:
         return None
     after = content.split(SEMANTIC_INDEX_HEADER, 1)[1]
@@ -70,18 +85,20 @@ def extract_semantic_index(content: str) -> Optional[Dict[str, Any]]:
 
 
 def strip_semantic_index(content: str) -> str:
-    """Return content with the trailing SEMANTIC INDEX section removed."""
-    if SEMANTIC_INDEX_HEADER not in content:
-        return content
-    head = content.split(SEMANTIC_INDEX_HEADER, 1)[0]
-    return head.rstrip() + "\n"
+    """Return content with the legacy trailing SEMANTIC INDEX section removed.
+    Frontmatter is preserved (it is now the primary metadata location)."""
+    return _strip_legacy_block(content)
 
 
 def write_with_semantic_index(content: str, semantic_index: Dict[str, Any]) -> str:
-    """Replace (or append) the SEMANTIC INDEX block with the given dict."""
-    body = strip_semantic_index(content).rstrip()
-    minified = json.dumps(semantic_index, separators=(",", ":"))
-    return body + "\n\n" + SEMANTIC_INDEX_HEADER + "\n" + minified + "\n"
+    """Merge the descriptor `semantic_index` into the file's frontmatter.
+
+    Replaces the legacy trailing-block write: structured fields now live only in
+    frontmatter. Any trailing SEMANTIC INDEX block is stripped (migration).
+    """
+    # `file` is a path computed at read time (scan_entities sets it); never store it.
+    updates = {k: v for k, v in semantic_index.items() if k != "file"}
+    return merge_frontmatter(content, updates)
 
 
 # --- index.md scanning --------------------------------------------------------

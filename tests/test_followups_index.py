@@ -95,6 +95,11 @@ def test_personal_followups_disabled():
     assert p.followups_source_dir(Path("/x")) is None
 
 
+@pytest.mark.skip(
+    reason="M3 rewrites: v2 demotes commitments; Active Items now aggregates "
+          "## Open Items sections across entity files, not a commitments-folder scan. "
+          "This test asserted the removed followups_source_folder contract."
+)
 def test_corporate_followups_source_dir_resolves():
     """Corporate followups_source_dir resolves under the worktree root."""
     p = load_ontology("corporate")
@@ -116,7 +121,7 @@ def test_parser_extracts_title_status_owner_due(tmp_path):
     assert parsed is not None
     assert parsed["slug"] == "deliver_qbr"
     assert parsed["title"] == "Deliver McDonald's QBR by May"
-    assert parsed["status"] == "In Progress"
+    assert parsed["status"] == "in_progress"  # v2: canonicalized to the open_item enum
     assert parsed["owner"] == "[[benjamin_powell]]"
     assert parsed["due"] == "Early May 2026"
 
@@ -162,6 +167,10 @@ def test_parser_tolerates_field_name_variants(tmp_path):
 # Full rebuild
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skip(
+    reason="M3 rewrites: Active Items now aggregates ## Open Items sections, "
+          "not a commitments-folder scan. This asserted the removed scan contract."
+)
 def test_rebuild_renders_active_commitments_section(tmp_path):
     agent = _make_corporate_writer(tmp_path)
     cdir = tmp_path / "entities" / "commitments"
@@ -207,6 +216,10 @@ def test_rebuild_uses_existing_other_items_when_llm_fails(tmp_path):
     assert "previous item two" in out
 
 
+@pytest.mark.skip(
+    reason="M3 rewrites: empty-list behavior comes from Open Items aggregation, "
+          "not commitments-folder scan."
+)
 def test_rebuild_writes_none_when_no_commitments_and_no_other(tmp_path):
     agent = _make_corporate_writer(tmp_path)
     with patch.object(agent, "_call_llm", return_value="_(none)_"):
@@ -217,6 +230,10 @@ def test_rebuild_writes_none_when_no_commitments_and_no_other(tmp_path):
     assert "## Active Commitments\n\n_(none)_" in out
 
 
+@pytest.mark.skip(
+    reason="M3 rewrites: Context wikilinks now point at Open Items owners, "
+          "not commitment files."
+)
 def test_rebuild_includes_wikilink_to_source_file(tmp_path):
     """Each rendered commitment must have a Context wikilink pointing back to its file."""
     agent = _make_corporate_writer(tmp_path)

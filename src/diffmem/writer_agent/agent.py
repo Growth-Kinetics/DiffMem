@@ -752,14 +752,15 @@ class WriterAgent:
             # Get semantic index JSON from LLM
             semantic_index_data = self._call_llm("", prompt, is_json=True)
 
-            # Override any LLM-generated 'file' path with the computed canonical path
-            semantic_index_data['file'] = canonical_path
+            # `file` is a path computed at read time (scan_entities sets it);
+            # never persist it into frontmatter.
+            semantic_index_data.pop("file", None)
 
-            # Convert to properly formatted JSON string
-            semantic_index_json = json.dumps(semantic_index_data, separators=(',', ':'))
-
-            # Prepare updated content
-            updated_content = content_without_index.rstrip() + '\n\n## SEMANTIC INDEX\n' + semantic_index_json + '\n'
+            # v2: structured metadata lives in YAML frontmatter (merged), not a
+            # trailing `## SEMANTIC INDEX` JSON block. merge_frontmatter also
+            # strips any legacy trailing block (migration).
+            from ..frontmatter import merge_frontmatter
+            updated_content = merge_frontmatter(content_without_index, semantic_index_data)
 
             return {
                 'success': True,
@@ -993,8 +994,20 @@ Total entities: {len(index_entries)}
 
         status = meta.get("status", "Active")
         # Drop completed/done/cancelled — they self-evict from the live list.
-        if status.lower() in {"completed", "done", "cancelled", "canceled", "closed"}:
+        # v2: canonicalize against the ontology's open_item enum (code owns the
+        # decision; freeform prose like "done (previously active)" still maps to
+        # a terminal state and is dropped).
+        from ..status import canonicalize_status
+        open_item_enum = (
+            self.ontology.schema.get("status_enums", {}).get("open_item")
+            if self.ontology is not None else None
+        )
+        canon = canonicalize_status(status, open_item_enum)
+        if canon in {"done", "cancelled"}:
             return None
+        # Keep the canonical form for downstream rendering.
+        if canon is not None:
+            status = canon
 
         # Owner — accept several common header variants the LLM produces
         owner = (

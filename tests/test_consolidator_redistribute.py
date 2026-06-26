@@ -14,7 +14,7 @@ import git
 from tests._fixtures import FakeLLM, build_worktree, write_person
 
 from diffmem.consolidator_agent.agent import ConsolidatorAgent
-from diffmem.consolidator_agent._shared import estimate_tokens
+from diffmem.consolidator_agent._shared import estimate_tokens, extract_semantic_index
 
 
 # --- helpers ------------------------------------------------------------------
@@ -162,20 +162,20 @@ def test_redistribute_moves_attributed_section_and_extracts_orphan(tmp_path: Pat
     new_user = user_file.read_text(encoding="utf-8")
     assert "Maya Section" not in new_user, "attributed move should remove Maya section"
     assert "Project X Methodology Reflections" not in new_user, "orphan extraction should remove data-gov section"
-    # SEMANTIC INDEX preserved.
-    assert "## SEMANTIC INDEX" in new_user
+    # Structured metadata preserved (frontmatter in v2; legacy trailing block tolerated).
+    assert extract_semantic_index(new_user) is not None, "user entity must retain metadata"
 
     # Maya file received the moved section.
     maya = (wt / "memories" / "people" / "maya.md").read_text(encoding="utf-8")
     assert "Maya Section" in maya
-    # SEMANTIC INDEX still last in Maya file.
-    assert maya.rstrip().endswith("}") or "SEMANTIC INDEX" in maya.split("Maya Section")[-1]
+    # Structured metadata still present after the move.
+    assert extract_semantic_index(maya) is not None, "maya file must retain metadata"
 
-    # New context file created with SEMANTIC INDEX.
+    # New context file created with structured metadata.
     new_ctx = wt / "memories" / "contexts" / "project_x_methodology.md"
     assert new_ctx.exists()
     new_ctx_content = new_ctx.read_text(encoding="utf-8")
-    assert "## SEMANTIC INDEX" in new_ctx_content
+    assert extract_semantic_index(new_ctx_content) is not None, "new context must carry metadata"
     # Content preserved.
     assert "Project X Methodology Reflections" in new_ctx_content
 
