@@ -1049,38 +1049,108 @@ Total entities: {len(index_entries)}
         body = body.strip()
         return body or "_(none)_"
 
-    def _rebuild_followups_index(self, memory_input: str) -> None:
-        """STEP 7: Rebuild followups.md from entities/commitments/* + LLM-curated Other Items.
+    def _collect_open_items(self) -> List[Dict[str, Any]]:
+        """Walk entity files and collect active `## Open Items` entries.
 
-        Two sections, both regenerated every session:
-          - ## Active Commitments — deterministic scan of the source folder.
-            Items with Status: Completed/Done/Cancelled are dropped (history in git).
-          - ## Other Items — LLM-refreshed from previous + new session diff.
+        Each entry: {title, status, owner, due, entity_path, entity_title}. Only entries
+        whose canonical status is in {open, in_progress, blocked} are returned —
+        done/cancelled self-evict (history lives in git).
         """
-        source_dir = self.ontology.followups_source_dir(self.user_path)
-        if source_dir is None or not source_dir.exists():
-            self.logger.debug("FOLLOWUPS_SKIP: source dir not configured or absent.")
+        from ..status import canonicalize_status
+        from ..frontmatter import parse_frontmatter
+        import re
+        enum = (
+            self.ontology.schema.get("status_enums", {}).get("open_item")
+            if self.ontology is not None else None
+        )
+        active = {"open", "in_progress", "blocked"}
+        items: List[Dict[str, Any]] = []
+        entity_dirs = (
+            self.ontology.entity_dirs(self.user_path)
+            if self.ontology is not None
+            else [self.user_path / "memories"]
+        )
+        for d in entity_dirs:
+            if not d.exists():
+                continue
+            for md in sorted(d.rglob("*.md")):
+                if md.name in {"index.md", "episodes_index.md"}:
+                    continue
+                try:
+                    content = md.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                fm, _ = parse_frontmatter(content)
+                entity_title = (fm or {}).get("title") or md.stem
+                # find the ## Open Items section
+                if "## Open Items" not in content:
+                    continue
+                after = content.split("## Open Items", 1)[1]
+                for line in after.splitlines():
+                    s = line.strip()
+                    if s.startswith("## "):  # next section
+                        break
+                    if not s.startswith("- "):
+                        continue
+                    # parse `- **[status]** title — details`
+                    m = re.match(r"^- \*\*\[(?P<st>[^\]]+)\]\*\*\s*(?P<title>.*)$", s)
+                    if not m:
+                        continue
+                    raw_status = m.group("st")
+                    rest = m.group("title").strip()
+                    canon = canonicalize_status(raw_status, enum)
+                    if canon not in active:
+                        continue  # terminal or unknown → self-evict
+                    # crude owner/due extraction from the rest (best-effort)
+                    owner = ""
+                    om = re.search(r"assignee[:\s]*\[\[([^\]]+)\]\]", rest, re.I)
+                    if om:
+                        owner = f"[[{om.group(1)}]]"
+                    due = ""
+                    dm = re.search(r"due[:\s]*([0-9]{4}-[0-9]{2}-[0-9]{2}[A-Za-z0-9:-]*)", rest, re.I)
+                    if dm:
+                        due = dm.group(1)
+                    title = re.split(r"\s+[—-]\s+|\s+assignee\s*[:=]", rest, maxsplit=1, flags=re.I)[0].strip()
+                    if not title:
+                        title = rest
+                    items.append({
+                        "title": title,
+                        "status": canon,
+                        "owner": owner,
+                        "due": due,
+                        "entity_path": md,
+                        "entity_title": entity_title,
+                    })
+        return items
+
+    def _rebuild_followups_index(self, memory_input: str) -> None:
+        """STEP 7: Rebuild followups.md from `## Open Items` sections + LLM-curated Other Items.
+
+        v2: the Active Items section is a deterministic aggregation of every
+        `## Open Items` entry across all entity files whose canonical status is
+        open/in_progress/blocked (done/cancelled self-evict — history lives in git).
+        There is no longer a commitments folder to scan. The Other Items section
+        is LLM-refreshed and must not duplicate an existing Open Items entry.
+        """
+        if not self.ontology or not self.ontology.followups_enabled:
+            self.logger.debug("FOLLOWUPS_SKIP: followups disabled for this ontology.")
             return
 
-        self.logger.info("STEP 7: Rebuilding followups.md...")
+        self.logger.info("STEP 7: Rebuilding followups.md (Open Items aggregation)...")
 
-        # --- Section 1: deterministic Active Commitments ---
-        commitments: List[Dict[str, Any]] = []
-        for f in sorted(source_dir.glob("*.md")):
-            parsed = self._parse_commitment_metadata(f)
-            if parsed is not None:
-                commitments.append(parsed)
+        # --- Section 1: deterministic Active Items (Open Items sections) ---
+        items = self._collect_open_items()
 
         # --- Section 2: LLM-curated Other Items ---
         followups_path = self.user_path / "followups.md"
         previous_other = self._read_existing_other_items(followups_path)
-        commitment_slugs = ", ".join(c["slug"] for c in commitments) or "(none yet)"
+        item_titles = ", ".join(i["title"] for i in items) or "(none yet)"
 
         other_items_md = "_(none)_"
         try:
             prompt_template = self._load_prompt("build_followups")
             prompt = prompt_template.format(
-                commitment_slugs=commitment_slugs,
+                commitment_slugs=item_titles,
                 previous_other_items=previous_other,
                 memory_input=memory_input,
             )
@@ -1090,7 +1160,6 @@ Total entities: {len(index_entries)}
                 if cleaned:
                     other_items_md = cleaned
         except FileNotFoundError:
-            # Prompt not defined for this ontology — degrade gracefully to commitments-only
             self.logger.debug("FOLLOWUPS: build_followups prompt absent; skipping Other Items.")
             other_items_md = "_(none — `build_followups` prompt not configured)_"
         except Exception as e:
@@ -1103,22 +1172,21 @@ Total entities: {len(index_entries)}
             "# Follow-ups",
             "_Live to-do list. When a follow-up completes, it disappears from this file — "
             "history lives in `git log`._",
-            f"_Updated: {ts} | {len(commitments)} active commitments_",
+            f"_Updated: {ts} | {len(items)} active items_",
             "",
-            "## Active Commitments",
+            "## Active Items",
             "",
         ]
-        if commitments:
-            for c in commitments:
-                lines.append(f"### {c['title']}")
-                lines.append(f"- **Status:** {c['status']}")
-                if c["owner"]:
-                    lines.append(f"- **Owner:** {c['owner']}")
-                if c["due"]:
-                    lines.append(f"- **Due:** {c['due']}")
-                # Wikilink to the source commitment file (relative path inside the vault)
-                rel = c["path"].relative_to(self.user_path).as_posix().removesuffix(".md")
-                lines.append(f"- **Context:** [[{rel}|{c['title']}]]")
+        if items:
+            for it in items:
+                rel = it["entity_path"].relative_to(self.user_path).as_posix().removesuffix(".md")
+                lines.append(f"### {it['title']}")
+                lines.append(f"- **Status:** {it['status']}")
+                if it["owner"]:
+                    lines.append(f"- **Owner:** {it['owner']}")
+                if it["due"]:
+                    lines.append(f"- **Due:** {it['due']}")
+                lines.append(f"- **Context:** [[{rel}|{it['entity_title']}]]")
                 lines.append("")
         else:
             lines.append("_(none)_")
@@ -1131,7 +1199,7 @@ Total entities: {len(index_entries)}
 
         followups_path.write_text("\n".join(lines), encoding="utf-8")
         self.logger.info(
-            f"FOLLOWUPS_REBUILT: {followups_path} ({len(commitments)} active commitments)"
+            f"FOLLOWUPS_REBUILT: {followups_path} ({len(items)} active items)"
         )
 
     def process_session(self, memory_input: str, session_id: str, session_date: str = None):
