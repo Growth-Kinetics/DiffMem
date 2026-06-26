@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 import git
 from openai import OpenAI
 
-from . import _dedupe, _link, _redistribute
+from . import _dedupe, _link, _reabsorb, _redistribute
 from .lock import ConsolidatorLock
 from diffmem.ontology.loader import OntologyProfile, load_ontology
 
@@ -146,4 +146,18 @@ class ConsolidatorAgent:
                 llm_call=self._call_llm,
                 user_id=self.user_id,
                 window=window,
+            )
+
+    def run_reabsorb(self) -> Dict[str, Any]:
+        """Fold legacy `entities/commitments/*.md` files into their owner entity's
+        `## Open Items` section, then delete the commitment file. The v2 migration
+        path — commitments are no longer a top-level entity type. Idempotent: a
+        corpus with no commitments folder produces zero commits."""
+        with self._lock():
+            repo = self._repo()
+            return _reabsorb.run(
+                worktree=self.repo_path,
+                repo=repo,
+                user_id=self.user_id,
+                ontology=self.ontology,
             )

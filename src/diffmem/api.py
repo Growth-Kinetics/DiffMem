@@ -306,7 +306,11 @@ class DiffMemory:
 
     # CONSOLIDATION
 
-    _ALLOWED_TOOLS = ("dedupe", "redistribute", "link")
+    _ALLOWED_TOOLS = ("reabsorb", "dedupe", "redistribute", "link")
+    # reabsorb is a one-time migration tool (folds legacy commitments); it is
+    # chainable + valid but NOT in the default run set. Default consolidate()
+    # behaviour is unchanged: dedupe → redistribute → link.
+    _DEFAULT_TOOLS = ("dedupe", "redistribute", "link")
 
     def _consolidator(self) -> ConsolidatorAgent:
         return ConsolidatorAgent(
@@ -324,9 +328,11 @@ class DiffMemory:
         """Run the consolidator over this user's worktree.
 
         Args:
-            tools: subset of ("dedupe", "redistribute", "link") in any order.
-                   Execution is always in canonical order: dedupe → redistribute → link.
-                   If None, runs all three.
+            tools: subset of ("reabsorb", "dedupe", "redistribute", "link") in any order.
+                   Execution is always in canonical order:
+                   reabsorb → dedupe → redistribute → link.
+                   If None, runs the default repair set (dedupe → redistribute → link);
+                   pass "reabsorb" explicitly to fold a legacy commitments corpus.
             window: commit window for the link tool (default 3).
             soft_cap_tokens: token cap above which an entity is considered
                              oversized by the redistribute tool (default 32_000).
@@ -338,7 +344,7 @@ class DiffMemory:
         if not self.is_onboarded():
             raise ValueError(f"User {self.user_id} has not been onboarded.")
         if tools is None:
-            tools = list(self._ALLOWED_TOOLS)
+            tools = list(self._DEFAULT_TOOLS)
         # Validate + canonical order.
         unknown = [t for t in tools if t not in self._ALLOWED_TOOLS]
         if unknown:
@@ -350,7 +356,9 @@ class DiffMemory:
         all_commits: List[str] = []
 
         for tool in ordered:
-            if tool == "dedupe":
+            if tool == "reabsorb":
+                r = consolidator.run_reabsorb()
+            elif tool == "dedupe":
                 r = consolidator.run_dedupe()
             elif tool == "redistribute":
                 r = consolidator.run_redistribute(soft_cap_tokens=soft_cap_tokens)
