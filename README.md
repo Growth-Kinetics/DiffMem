@@ -212,12 +212,15 @@ If `REQUIRE_AUTH=true`, add `-H "Authorization: Bearer $API_KEY"` to every reque
 
 DiffMem ships with an out-of-band **consolidator agent** that repairs three
 failure modes the writer agent accumulates at scale: duplicate entities, an
-overgrown user entity, and missing interlinking. It exposes three tools —
-`dedupe`, `redistribute`, `link` — invokable independently or chained.
+overgrown user entity, and missing interlinking. It exposes four tools —
+`dedupe`, `redistribute`, `link` (the default repair set), plus `reabsorb` (a
+one-time v2 migration tool, excluded from the default run) — invokable
+independently or chained.
 
-Every consolidation commit is prefixed with `consolidate(dedupe):`,
-`consolidate(redistribute):`, or `consolidate(link):` so retrieval agents and
-humans can tell repair commits apart from session-formation commits.
+Every consolidation commit is prefixed with `consolidate(reabsorb):`,
+`consolidate(dedupe):`, `consolidate(redistribute):`, or `consolidate(link):`
+so retrieval agents and humans can tell repair commits apart from
+session-formation commits.
 
 Endpoints:
 
@@ -245,10 +248,20 @@ curl -X POST "http://localhost:8000/memory/alex/process-commit-and-consolidate" 
     "session_id": "s-042",
     "consolidate_tools": ["dedupe", "link"]
   }'
+
+# v2 migration: fold a legacy commitments corpus into owner Open Items (run once).
+curl -X POST "http://localhost:8000/memory/alex/consolidate" \
+  -H "Content-Type: application/json" -d '{"tools": ["reabsorb"]}'
 ```
 
 What each tool does:
 
+- **reabsorb** — *migration-only, deterministic (no LLM).* Folds a legacy
+  `entities/commitments/` corpus into each commitment's owner entity as a
+  `## Open Items` section (projects preferred → people → root user),
+  canonicalizes status, then `git rm`s the source file. Idempotent: an empty or
+  absent commitments folder produces zero commits. Required once when upgrading
+  a corporate-ontology corpus from v1 to v2; excluded from the default run.
 - **dedupe** — prefilters duplicate candidates (name similarity + overlapping
   `related_entities` / `hard_cues`), asks an LLM to confirm at high confidence,
   then merges the lower-strength file into the higher-strength one. The loser's

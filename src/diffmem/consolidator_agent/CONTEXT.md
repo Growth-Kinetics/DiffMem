@@ -19,6 +19,8 @@ history.
 ## INFO FLOW
 Trigger (API or chained from process-and-commit)
   → acquire `.diffmem/consolidator.lock`
+  → `run_reabsorb` (migration-only; deterministic, no LLM — folds legacy
+     `entities/commitments/*` into owner `## Open Items` + `git rm` + commit)
   → `run_dedupe` (prefilter candidates → LLM judge → LLM merge → commit per merge)
   → `run_redistribute` (token-scan → LLM analyze → move/extract → commit per source)
   → `run_link` (git log co-occurrence → LLM weave wikilinks → single commit)
@@ -26,13 +28,18 @@ Trigger (API or chained from process-and-commit)
   → return per-tool result dicts
 
 Tools are independently invokable; canonical order when chained is
-dedupe → redistribute → link (dedupe changes filenames so links would break
-if generated first; redistribution alters co-occurrence signal).
+reabsorb → dedupe → redistribute → link (reabsorb must run first to eliminate
+the legacy commitments folder before dedupe reasons about the corpus; dedupe
+changes filenames so links would break if generated first; redistribution
+alters co-occurrence signal). **`reabsorb` is excluded from the default run set**
+(`_DEFAULT_TOOLS = dedupe, redistribute, link`) — it is a one-time v2 migration
+invoked explicitly via `consolidate(tools=["reabsorb"])`. Routine
+`consolidate()` behaviour is unchanged.
 
 ## TERMINOLOGY
 - **Consolidate commit:** git commit produced by this agent, message starts
-  with `consolidate(dedupe):`, `consolidate(redistribute):`, or
-  `consolidate(link):`.
+  with `consolidate(reabsorb):`, `consolidate(dedupe):`,
+  `consolidate(redistribute):`, or `consolidate(link):`.
 - **Canonical file:** the survivor of a merge — the file with higher
   `memory_strength` in its SEMANTIC INDEX (ties broken by longer filename).
 - **Soft cap:** the token threshold above which an entity is considered
@@ -57,6 +64,19 @@ if generated first; redistribution alters co-occurrence signal).
   `_writer_pool.run_in_executor` so the uvicorn event loop stays free.
 - **Distinct commit prefix.** All commits start with `consolidate(...)`. The
   retrieval agent can use this prefix to weight or filter history.
+- **Per-file commits require explicit staging.** Each tool commits with
+  `repo.index.commit()`, which snapshots the git INDEX, not the working tree.
+  Any file mutated on disk (e.g. an owner file gaining a `## Open Items` entry
+  in reabsorb) MUST be staged with `repo.git.add(<path>)` before commit, or the
+  edit is left as a dirty working-tree change and silently dropped. The sibling
+  `run_dedupe` pattern (`_dedupe.py`) is the reference. Never use
+  `repo.git.add("--all")` as an error fallback — it sweeps the runtime
+  `.diffmem/consolidator.lock` into user history.
+- **reabsorb is deterministic + idempotent.** No LLM. Owner resolution prefers
+  projects globally, then people, then the root user entity — folder priority
+  dominates wikilink parse order (an assignee person link parsed before a
+  related-project link must NOT win over the project). Empty/absent
+  `entities/commitments/` → zero commits (v2 steady state).
 - **Survivor = higher memory_strength.** Loser's filename is preserved as an
   `alias` in the survivor's SEMANTIC INDEX so writer-agent recognition catches
   it on future sessions.

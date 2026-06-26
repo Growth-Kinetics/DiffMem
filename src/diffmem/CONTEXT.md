@@ -62,10 +62,20 @@ in the git commit graph. No vector DB, no embeddings.
   folder listing rendered from ontology at call time.
 - `storage/factory.py` — Pluggable storage/backup backend factory.
 - `consolidator_agent/agent.py` — `ConsolidatorAgent`: out-of-band repair pass
-  with three tools (`run_dedupe`, `run_redistribute`, `run_link`). Ontology-aware
-  entity scanning and index rebuilding.
+  with four tools (`run_reabsorb`, `run_dedupe`, `run_redistribute`, `run_link`).
+  `reabsorb` is a migration-only tool excluded from the default run set.
+  Ontology-aware entity scanning and index rebuilding.
 - `ontology/loader.py` — `load_ontology()` + `OntologyProfile` dataclass. Central
   resolution point for all ontology concerns. Built-ins in `ontologies/`.
+- `frontmatter.py` — YAML frontmatter parse/merge utilities; the v2 location for
+  structured entity metadata (`type`, `status`, `cues`, …). Tolerates + migrates
+  the legacy trailing `## SEMANTIC INDEX` JSON block.
+- `status.py` — `canonicalize_status()`: deterministic, code-owned mapping of
+  freeform LLM status prose to the closed enum (fixes the Model Judgment
+  Boundary violation where freeform statuses escaped the followups drop filter).
+- `conformance.py` — `check_conformance()`: read-only scan flagging entity files
+  whose frontmatter `type` ≠ folder `index_type` (mis-bucketed analysis work)
+  or that lack frontmatter.
 - `executor/factory.py` — `build_executor(pool)`: reads `EXECUTOR` env var.
 - `executor/inline.py` — `InlineExecutor`: default backend; per-user `threading.Lock`.
 - `executor/hatchet.py` — `HatchetExecutor`: opt-in backend; Hatchet workflow engine.
@@ -82,9 +92,12 @@ in the git commit graph. No vector DB, no embeddings.
   (`/context`), remote pulls at mount time, AND consolidation runs. Keeps the
   uvicorn event loop free for health probes at all times.
 - **Consolidator commits use the `consolidate:` prefix** — specifically
-  `consolidate(dedupe):`, `consolidate(redistribute):`, and
-  `consolidate(link):`. This lets retrieval agents and human auditors
-  distinguish them from session-formation commits. See ADR-D006.
+  `consolidate(reabsorb):`, `consolidate(dedupe):`, `consolidate(redistribute):`,
+  and `consolidate(link):`. This lets retrieval agents and human auditors
+  distinguish them from session-formation commits. `reabsorb` is a one-time
+  v2 migration tool (folds a legacy `entities/commitments/` corpus into owner
+  `## Open Items`); it is excluded from the default `consolidate()` run set.
+  See ADR-D006.
 - **Pull happens at mount time only** (first request per user per process lifetime, i.e. after
   a service restart). If the service stays up for days and you push memory edits from another
   machine, DiffMem won't see them until the next restart. Pull is fast-forward only — diverged
