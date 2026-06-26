@@ -1,6 +1,6 @@
 """M5: end-to-end fixture validation of the corporate v2 ontology.
 
-Mirrors the growth-kinetics pathologies (oversized commitments corpus, mis-bucketed
+Mirrors a real-world agency's pathologies (oversized commitments corpus, mis-bucketed
 types, freeform/legacy statuses) on a neutral (sanitized) fixture, then runs the
 v2 pipeline — reabsorb + conformance + followups rebuild — and asserts the
 deterministic post-conditions. No real client data; uses neutral Acme/Atlas names.
@@ -41,7 +41,7 @@ def _build_pathological_worktree(tmp_path: Path) -> Path:
 
     # Two owner projects (proper v2 frontmatter).
     _write_project(wt, "atlas", "Project Atlas")
-    _write_project(wt, "hikari", "Project Hikari", with_open_items=True)
+    _write_project(wt, "nimbus", "Project Nimbus", with_open_items=True)
 
     # One person (so owner-resolution can fall back to people too).
     _write_person(wt, "maya_rivera", "Maya Rivera")
@@ -58,15 +58,15 @@ def _build_pathological_worktree(tmp_path: Path) -> Path:
     _legacy_commitment(cdir, "ship_landing_page", "Ship landing page", "Open",
                        assignee="sam_rivera", related=["atlas"])
     _legacy_commitment(cdir, "build_capacity_signals", "Build capacity signals", "open",
-                       related=["hikari"])
+                       related=["nimbus"])
     _legacy_commitment(cdir, "deliver_qbr", "Deliver QBR by May", "Active",
-                       assignee="maya_rivera", related=["hikari"])
+                       assignee="maya_rivera", related=["nimbus"])
     _legacy_commitment(cdir, "old_poc_idea", "Old POC idea", "done (previously tracked as active)",
                        related=["atlas"])
     _legacy_commitment(cdir, "finished_mvp", "Finished MVP", "Completed",
                        related=["atlas"])
     _legacy_commitment(cdir, "dropped_initiative", "Dropped initiative", "Cancelled",
-                       related=["hikari"])
+                       related=["nimbus"])
     # mis-bucketed: a # Project: heading in a commitments file
     _legacy_commitment(cdir, "analyze_coffee_appu", "Analyze Coffee APPU", "Active",
                        related=["atlas"], heading="Project")

@@ -210,15 +210,15 @@ def test_parser_extracts_title_status_owner_due(tmp_path):
     agent = _make_corporate_writer(tmp_path)
     commitments_dir = tmp_path / "entities" / "commitments"
     f = _commitment_file(
-        commitments_dir, "deliver_qbr", "Deliver McDonald's QBR by May",
-        status="In Progress", owner="[[benjamin_powell]]", due="Early May 2026",
+        commitments_dir, "deliver_qbr", "Deliver Northwind QBR by May",
+        status="In Progress", owner="[[sam_rivera]]", due="Early May 2026",
     )
     parsed = agent._parse_commitment_metadata(f)
     assert parsed is not None
     assert parsed["slug"] == "deliver_qbr"
-    assert parsed["title"] == "Deliver McDonald's QBR by May"
+    assert parsed["title"] == "Deliver Northwind QBR by May"
     assert parsed["status"] == "in_progress"  # v2: canonicalized to the open_item enum
-    assert parsed["owner"] == "[[benjamin_powell]]"
+    assert parsed["owner"] == "[[sam_rivera]]"
     assert parsed["due"] == "Early May 2026"
 
 
