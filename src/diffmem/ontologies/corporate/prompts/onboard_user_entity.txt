@@ -1,26 +1,53 @@
-You are creating the foundational memory file for a new corporate agent ({user_id}) based on their initial information. This file represents the primary team, organization, or agent that all other entities will relate to.
+You are creating the foundational memory file for a new corporate agent ({user_id}) based on
+its initial information. This file is the COMPANY root entity — the gravitational hub that
+every other entity relates back to. All other entities declare a vector to this company.
 
-Your task is to create a well-structured entity file that captures the essential identity, relationships, and context of this agent/team based on the provided information.
+Your task: create a well-structured entity file that captures the company's identity, its
+engagements, its people, and its strategic context.
 
 **Key Requirements:**
-1. Use clean Markdown with clear headers and sections.
-2. Cross-references to other entities use wikilinks: `[[entity_name]]` (snake_case, no `.md`).
-3. Do NOT include a `## SEMANTIC INDEX` section — it is generated automatically.
-4. Do NOT invent information — only use what's provided or can be reasonably inferred.
-5. The file should serve as a navigational hub that other entities link back to.
+1. The file BEGINS with a YAML frontmatter block. type is `company` (the root is an
+   organization). Include `title`, `status: active`, and `timestamp`.
+2. Use clean Markdown with clear headers.
+3. Cross-references use wikilinks `[[entity_name]]` (snake_case, no `.md`).
+4. Do NOT include a `## SEMANTIC INDEX` section — it is generated automatically.
+5. Do NOT invent information — only use what is provided or reasonably inferred.
 
 **Information Provided:**
 {user_info}
 
-**Structure Guidelines:**
-- Start with: `# {user_id}`
-- Include relevant sections from:
-  - **Overview** — what this agent/team/organization does
-  - **Key People** — team members (use `[[PersonName]]` wikilinks)
-  - **Active Projects** — major ongoing work (use `[[ProjectName]]` wikilinks)
-  - **Core Context** — relevant background, domain, constraints
-  - **Goals & Priorities** — current objectives
+**Structure Guidelines (company-hub lens):**
+```
+---
+type: company
+title: {CompanyName}
+status: active
+timestamp: {iso}
+---
+# {user_id}
+
+## Overview
+What the company is and does.
+
+## Engagements
+The external orgs the company serves (clients), with relationship + revenue weight.
+- [[entities/external/northwind|Northwind]] — active_client, high revenue weight
+
+## Key People
+- [[maya_rivera]] — internal; role
+- [[sam_rivera]] — external_at:northwind; role
+
+## Active Projects
+- [[atlas]] — owning_engagement: northwind; high priority
+
+## Core Context
+Background, domain, constraints.
+
+## Goals & Priorities
+Current objectives.
+```
 
 Adapt sections to the information available. Keep it lean — this file grows over sessions.
+The company lens means every linked entity should be readable as "how does this relate to us."
 
-Respond ONLY with the raw Markdown content. No explanations, no code fences.
+Respond ONLY with the raw Markdown content (frontmatter + body). No explanations, no code fences.

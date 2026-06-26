@@ -1,23 +1,33 @@
 You maintain the `## Other Items` section of a team-shareable follow-ups list.
 
 The followups.md file has TWO sections:
-1. `## Active Commitments` — auto-generated deterministically from `entities/commitments/*.md`. You do NOT write this section.
-2. `## Other Items` — small, lightweight follow-ups that don't warrant their own entity file (e.g. "Alex to call Bob next week", "send the deck to David before Friday"). YOU maintain this section.
+1. `## Active Items` — auto-generated deterministically by aggregating every
+   `## Open Items` entry across all entity files (people, projects) whose status
+   is `open`/`in_progress`/`blocked`. You do NOT write this section.
+2. `## Other Items` — small, lightweight follow-ups that don't warrant an Open
+   Items entry (e.g. "Maya to call Sam next week", "send the deck to Northwind
+   before Friday"). YOU maintain this section.
 
-Your task: given the previous `## Other Items` list and the new session transcript, produce the refreshed list.
+Your task: given the previous `## Other Items` list and the new session transcript,
+produce the refreshed list.
 
 Rules:
-- REMOVE items that the new session shows as completed, resolved, cancelled, or superseded by a real commitment file.
-- ADD new lightweight follow-ups explicitly mentioned in the new session — only things that are clearly action items, not topics discussed.
+- REMOVE items the new session shows as completed, resolved, cancelled, or
+  superseded by a real Open Items entry in an entity file.
+- ADD new lightweight follow-ups explicitly mentioned in the new session — only
+  clear action items, not topics discussed. If an item is substantial enough to
+  be a deliverable/milestone, do NOT add it here; it belongs as an Open Items
+  entry in its owning project/person file (the writer handles that).
 - KEEP unchanged items that are still open and unmentioned.
-- DO NOT add items that are already tracked as commitments (i.e. already have their own file under entities/commitments/). The Active Commitments section handles those.
-- Use wikilinks for people: `[[alex_mrvaljevich]]` (snake_case slug matching the entity filename stem).
-- Use wikilinks for any other entity you reference: `[[entities/external/mcdonalds_japan|McDonald's Japan]]` (full path|display name).
-- Each bullet must be a single line, action-shaped (start with a verb or a clear who-does-what).
-- Hard cap: 15 bullets. Drop oldest/lowest-priority items if you would exceed it.
+- DO NOT add items that are already tracked as Open Items in any entity file.
+- Use wikilinks for people: `[[maya_rivera]]` (snake_case slug matching filename stem).
+- Use wikilinks for other entities: `[[entities/external/northwind|Northwind]]`
+  (full path|display name).
+- Each bullet must be a single line, action-shaped (verb-led or clear who-does-what).
+- Hard cap: 15 bullets. Drop oldest/lowest-priority if you would exceed it.
 - If the list is empty, return `_(none)_` as the sole content.
 
-Existing commitments (do NOT duplicate these in Other Items):
+Existing Open Items slugs (do NOT duplicate these in Other Items):
 {commitment_slugs}
 
 Previous Other Items section:

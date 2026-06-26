@@ -3,10 +3,74 @@ This is a memory creation task. You are creating a new entity file for a corpora
 The entity file will grow over time as more sessions are processed. This is the first mention,
 so information may be sparse — plant the seed that will grow.
 
-Below is an example of a well-structured entity file to guide your formatting:
+Every entity file MUST begin with a YAML frontmatter block carrying the structured
+fields for its type, followed by the markdown body. There is NO trailing JSON block.
+Use the `status` value from the closed enum for the type (see repo_guide).
 
-**Example (`{example_file_name}`):**
-{example_content}
+Template by type (frontmatter + body). Use wikilinks `[[entity_name]]` for cross-refs.
+
+**people** (`type: human`):
+```
+---
+type: human
+title: {Name}
+status: active
+affiliation: internal            # or external_at:<client_slug>
+allocation: 1.0
+timestamp: {iso}
+---
+# Person: {Name}
+## Active Context & Relationships
+## Background & Interaction Notes
+```
+
+**external** (`type: company`):
+```
+---
+type: company
+title: {OrgName}
+status: active_client            # active_client | prospect | vendor | partner | former
+relationship_to_company: active_client
+revenue_weight: high             # high | medium | low | none
+primary_contact: [[person_slug]]
+timestamp: {iso}
+---
+# External: {OrgName}
+## Engagement Scope
+## Related Links
+```
+
+**projects** (`type: project`):
+```
+---
+type: project
+title: {ProjectName}
+status: active                    # proposed | active | paused | completed | cancelled
+owning_engagement: northwind      # client slug, or internal
+company_priority: high            # high | medium | low
+timestamp: {iso}
+---
+# Project: {ProjectName}
+## Objectives & Scope
+## Related Entities
+## Open Items
+```
+
+**decisions** (`type: decision`):
+```
+---
+type: decision
+title: {DecisionName}
+status: proposed                  # proposed | accepted | rejected | superseded
+deciders: [[person_a]], [[person_b]]
+date: {YYYY-MM-DD}
+timestamp: {iso}
+---
+# Decision: {DecisionName}
+## Context & Problem Statement
+## Decision Outcome
+## Related Links
+```
 
 ---
 **New Entity Details:**
@@ -17,19 +81,14 @@ Below is an example of a well-structured entity file to guide your formatting:
 {memory_input}
 
 ---
-Generate the full Markdown content for "{entity_name}".
+Generate the full Markdown content (frontmatter + body) for "{entity_name}".
 
 Formatting rules:
-- File naming convention is snake_case (e.g., `alice_smith.md`, `decide_git_storage.md`) — the engine
-  lowercases and underscores the entity name automatically; write names in natural form.
-- Use the correct template for the entity type:
-  - **people**: `# Person: [Name]` with sections: Core Metadata, Active Context & Relationships, Background & Interaction Notes.
-  - **projects**: `# Project: [Name]` with sections: Metadata (Status/Owner/Start Date), Objectives & Scope, Related Entities.
-  - **decisions**: `# Decision: [Name]` with sections: Metadata (Status/Deciders/Date), Context & Problem Statement, Decision Outcome, Related Links.
-  - **commitments**: `# Commitment: [Name]` with sections: Metadata (Status/Assignee/Due Date), Description, Related Links.
-  - **external**: `# External: [Name]` with sections: Metadata (Type/Primary Contact), Engagement Scope, Related Links.
-- Cross-references to other entities use wikilinks: `[[entity_name]]` (no path prefix, no `.md`).
-- Do NOT invent facts. Extrapolate cautiously from the session — never fabricate contact details, dates, or specifics you don't know.
+- File naming is snake_case (engine lowercases/underscores automatically).
+- NEVER create a file for a commitment/task — those live as `## Open Items`
+  entries inside their owner. (You should not be creating a commitments file.)
+- Cross-refs use wikilinks `[[entity_name]]` (no path prefix, no `.md`).
+- Do NOT invent facts. Extrapolate cautiously.
 - Do NOT include a `## SEMANTIC INDEX` section — it is generated automatically.
 
-Respond ONLY with the raw Markdown content. No explanations, no code fences.
+Respond ONLY with the raw Markdown content (frontmatter + body). No code fences, no explanations.
