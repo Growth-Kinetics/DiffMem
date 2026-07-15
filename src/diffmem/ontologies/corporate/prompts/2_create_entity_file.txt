@@ -13,13 +13,13 @@ Template by type (frontmatter + body). Use wikilinks `[[entity_name]]` for cross
 ```
 ---
 type: human
-title: {Name}
+title: {{Name}}
 status: active
 affiliation: internal            # or external_at:<client_slug>
 allocation: 1.0
-timestamp: {iso}
+timestamp: {{iso}}
 ---
-# Person: {Name}
+# Person: {{Name}}
 ## Active Context & Relationships
 ## Background & Interaction Notes
 ```
@@ -28,14 +28,14 @@ timestamp: {iso}
 ```
 ---
 type: company
-title: {OrgName}
+title: {{OrgName}}
 status: active_client            # active_client | prospect | vendor | partner | former
 relationship_to_company: active_client
 revenue_weight: high             # high | medium | low | none
 primary_contact: [[person_slug]]
-timestamp: {iso}
+timestamp: {{iso}}
 ---
-# External: {OrgName}
+# External: {{OrgName}}
 ## Engagement Scope
 ## Related Links
 ```
@@ -44,13 +44,13 @@ timestamp: {iso}
 ```
 ---
 type: project
-title: {ProjectName}
+title: {{ProjectName}}
 status: active                    # proposed | active | paused | completed | cancelled
 owning_engagement: northwind      # client slug, or internal
 company_priority: high            # high | medium | low
-timestamp: {iso}
+timestamp: {{iso}}
 ---
-# Project: {ProjectName}
+# Project: {{ProjectName}}
 ## Objectives & Scope
 ## Related Entities
 ## Open Items
@@ -60,13 +60,13 @@ timestamp: {iso}
 ```
 ---
 type: decision
-title: {DecisionName}
+title: {{DecisionName}}
 status: proposed                  # proposed | accepted | rejected | superseded
 deciders: [[person_a]], [[person_b]]
-date: {YYYY-MM-DD}
-timestamp: {iso}
+date: {{YYYY-MM-DD}}
+timestamp: {{iso}}
 ---
-# Decision: {DecisionName}
+# Decision: {{DecisionName}}
 ## Context & Problem Statement
 ## Decision Outcome
 ## Related Links
