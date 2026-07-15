@@ -3,3 +3,5 @@ requests
 openai
 gitpython
 python-dotenv
+# YAML frontmatter parsing (frontmatter.py)
+pyyaml

@@ -23,6 +23,8 @@ packages = [{include = "diffmem", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
+# YAML frontmatter parsing (frontmatter.py imports yaml at module load)
+pyyaml = "^6.0"
 # HTTP requests for OpenRouter API
 requests = "^2.31.0"
 # OpenAI client for OpenRouter/Cerebras compatibility
@@ -62,6 +64,12 @@ hatchet = ["hatchet-sdk"]
 diffmem = "diffmem.cli:main"
 diffmem-server = "diffmem.server:main"
 diffmem-worker = "diffmem.executor.hatchet_worker:main"
+
+[tool.poetry.plugins."diffmem.strategies"]
+# Built-in strategies register under the same group external packages use
+# (ADR-003), so list_strategies() is non-empty with OSS alone and behaviour
+# is unchanged when no external package is installed.
+consolidator = "diffmem.consolidator_agent.agent:ConsolidatorAgent"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

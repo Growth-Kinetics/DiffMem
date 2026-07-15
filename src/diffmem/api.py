@@ -11,6 +11,7 @@ from .retrieval_agent.agent import run_retrieval_agent, LLMConfig
 from .retrieval_agent.resolver import resolve_pointers
 from .consolidator_agent.agent import ConsolidatorAgent
 from .ontology.loader import OntologyProfile, load_ontology
+from .registry import get_strategy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -313,7 +314,12 @@ class DiffMemory:
     _DEFAULT_TOOLS = ("dedupe", "redistribute", "link")
 
     def _consolidator(self) -> ConsolidatorAgent:
-        return ConsolidatorAgent(
+        # Strategy lookup goes through the registry (ADR-003): the built-in
+        # "consolidator" entry resolves to ConsolidatorAgent unless an installed
+        # package overrides it. The default registration keeps behaviour
+        # identical to today (no external package import in core).
+        strategy_cls = get_strategy("consolidator")
+        return strategy_cls(
             str(self.repo_path),
             self.user_id,
             self.openrouter_api_key,
