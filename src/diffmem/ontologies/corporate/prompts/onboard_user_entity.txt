@@ -20,9 +20,9 @@ engagements, its people, and its strategic context.
 ```
 ---
 type: company
-title: {CompanyName}
+title: {{CompanyName}}
 status: active
-timestamp: {iso}
+timestamp: {{iso}}
 ---
 # {user_id}
 
