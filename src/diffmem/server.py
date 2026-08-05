@@ -184,9 +184,15 @@ def _spawn_background(coro) -> asyncio.Task:
 
 
 async def backup_user(user_id: str) -> None:
-    """Run a backup for one user. Safe to call from request handlers."""
+    """Run a backup for one user. Safe to call from request handlers.
+
+    sync_user() is blocking git I/O (commit + push to GitHub). It MUST run in a
+    thread: calling it directly on the event loop froze ALL API traffic
+    (including /health and reads) for the duration of a sweep — observed
+    2026-08-05 with 1,976 active users (~20 min outage during /server/sync).
+    """
     try:
-        repo_manager.sync_user(user_id)
+        await asyncio.to_thread(repo_manager.sync_user, user_id)
     except Exception as e:
         logger.error(f"BACKUP_ERROR for {user_id}: {e}")
 
