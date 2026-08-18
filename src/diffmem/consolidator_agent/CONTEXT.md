@@ -122,3 +122,40 @@ invoked explicitly via `consolidate(tools=["reabsorb"])`. Routine
   `tests/test_semantic_index_normalization.py`, including reproduction of the
   exact production crash shapes. Do NOT add defensive flattening at
   individual consumers — the choke points are the single source of truth.
+
+## MANAGEMENT SURFACE (v0.5.0)
+
+`management.py` (this capability) exposes the entity-management engine the
+memory admin UI consumes: `manage/merge | move | rename | edit | alias |
+delete | link | add-note` + `merge-suggestions`. Routes live in `server.py`
+under `/memory/{uid}/manage/*`.
+
+**Why it exists:** every prior write path was either probabilistic (writer
+sessions) or policy-driven (consolidator dedupe). Users need exact-intent
+mutations — merge THESE two, move THAT to places, add THIS context — that
+still preserve store integrity (lock, index rebuild, commit trail, backup).
+`run-command` is an LLM-facing READ sandbox and must never mutate.
+
+Rules:
+- **All ops under ConsolidatorLock** + `manage(...)`-prefixed commits + master
+  index rebuild + post-commit backup (same as consolidate).
+- **Merge is user-forced, same-type only** (ManagementError → HTTP 400 on
+  cross-type; the UI must offer Move first). No LLM judge — the user IS the
+  judge. `dry_run` returns per-loser previews without committing. All loser
+  name variants (stem + SI name + aliases) become survivor aliases.
+- **`context` param (all mutating ops):** dated bullet under `## User Context`
+  in the affected file. The writer reads the full body at update time, so the
+  note steers future reprocessing. Git-only — no timeline entries.
+- **Path sandboxing (`_safe_rel`):** worktree-relative .md entity files under
+  ontology entity dirs only — never index.md, the root user entity, timeline/,
+  sessions/, repo_guide.md, traversal, or absolute paths. Both sides of the
+  containment check are resolved (macOS /var vs /private/var).
+- **LLM ops (merge, add-note) run as executor jobs** — inline executor only
+  (work-thunk); HatchetExecutor would mis-run the consolidate workflow, so
+  `_manage_guard` returns 501 there. Sync ops run via `asyncio.to_thread`.
+- **add-note** weaves user text as ground truth (dated, attributed, supersedes
+  contradictions) via `prompts/manage_note.txt`; responses pass through the
+  SI normalization choke points before persisting.
+- **merge-suggestions** = dedupe review queue: the relaxed prefilter, no
+  judge; `name_threshold` query param widens the net. Returns pairs with
+  similarity + shared cues/related for the UI wizard.

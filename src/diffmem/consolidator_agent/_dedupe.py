@@ -39,8 +39,14 @@ def _overlap(a: List[str], b: List[str]) -> int:
     return len(set(map(str.lower, a or [])) & set(map(str.lower, b or [])))
 
 
-def find_candidate_pairs(entities: List[Dict[str, Any]]) -> List[Tuple[Dict, Dict]]:
+def find_candidate_pairs(
+    entities: List[Dict[str, Any]],
+    name_threshold: Optional[float] = None,
+) -> List[Tuple[Dict, Dict]]:
     """Pairs of entity dicts that pass the prefilter.
+
+    `name_threshold` (optional) overrides NAME_SIMILARITY_THRESHOLD — used by
+    the management surface's merge-suggestions queue to widen the net.
 
     Rule: same `type`, AND at least ONE corroborating signal:
       - name similarity ≥ NAME_SIMILARITY_THRESHOLD, OR
@@ -56,6 +62,8 @@ def find_candidate_pairs(entities: List[Dict[str, Any]]) -> List[Tuple[Dict, Dic
     remains the merge arbiter, so corroborated-but-differently-spelled pairs
     now reach it.
     """
+    if name_threshold is None:
+        name_threshold = NAME_SIMILARITY_THRESHOLD
     pairs: List[Tuple[Dict, Dict]] = []
     n = len(entities)
     for i in range(n):
@@ -83,7 +91,7 @@ def find_candidate_pairs(entities: List[Dict[str, Any]]) -> List[Tuple[Dict, Dic
             # Any ONE corroborating signal surfaces the pair; the LLM judge
             # (same_entity + high confidence) remains the merge arbiter.
             if (
-                sim >= NAME_SIMILARITY_THRESHOLD
+                sim >= name_threshold
                 or disambiguator_match
                 or rel_overlap >= MIN_OVERLAP_RELATED
                 or cue_overlap >= MIN_OVERLAP_HARD_CUES
