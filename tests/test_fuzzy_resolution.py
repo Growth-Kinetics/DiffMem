@@ -234,3 +234,31 @@ def test_merge_propagates_all_loser_name_variants(tmp_path: Path) -> None:
 def test_threshold_value_sane():
     """Guard the constant itself — lowering it silently would blur distinct people."""
     assert 0.8 <= FUZZY_NAME_THRESHOLD <= 0.95
+
+
+def test_writer_rebuild_master_index_reads_v2_frontmatter(tmp_path: Path):
+    """The writer's _rebuild_master_index must read v2 YAML frontmatter (not
+    just the legacy ## SEMANTIC INDEX JSON block). The legacy-only parser
+    silently skipped every v2 entity, leaving index.md empty → the identify
+    step saw no existing entities → duplicates (VPS incident 2026-08-18)."""
+    from diffmem.frontmatter import merge_frontmatter
+    import git
+
+    wt = build_worktree(tmp_path)
+    # Write a v2 entity with FRONTMATTER (not legacy SI block).
+    body = "# Person: Test Person\n\n## Role\n- Engineer.\n"
+    content = merge_frontmatter(body, {
+        "name": "test_person", "type": "human", "aliases": [],
+        "hard_cues": ["engineer"], "related_entities": [],
+    })
+    (wt / "memories" / "people" / "test_person.md").write_text(content, encoding="utf-8")
+    repo = git.Repo(wt)
+    repo.git.add("-A")
+    repo.index.commit("add test person")
+
+    w = _writer(wt)
+    w._rebuild_master_index()
+
+    idx = (wt / "index.md").read_text(encoding="utf-8")
+    assert "### test_person" in idx
+    assert "Total entities: 1" in idx

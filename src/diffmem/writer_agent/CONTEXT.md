@@ -67,6 +67,14 @@ ontology-agnostic at runtime.
   ontology's `schema.json` first.
 - For write pipeline latency: `process_session()` → per-step LLM calls, most time is
   in `_create_new_entities` / `_update_existing_entities` (parallel but LLM-bound).
+- **Writer _rebuild_master_index now reads v2 frontmatter (v0.5.2).** The prior
+  implementation only parsed the legacy `## SEMANTIC INDEX` JSON block — every
+  v2 entity (YAML frontmatter) was silently skipped, leaving index.md empty.
+  The identify step then saw no existing entities → proposed creating
+  everything → the duplicate-spawning behavior the user originally reported.
+  Fixed by delegating to the shared `rebuild_master_index` (consolidator_agent/
+  _shared) which uses `extract_semantic_index` (handles BOTH formats). The
+  self-healing behavior (rebuilding SI for files that lack one) is preserved.
 - For master index staleness: `_rebuild_master_index()` scans `_entity_md_files()` and
   re-extracts SEMANTIC INDEX blocks — check that entity files have a `## SEMANTIC INDEX`.
 - For duplicate entity creation: `_resolve_entity_file_path()` resolves in tiers —

@@ -975,107 +975,52 @@ class WriterAgent:
         self.logger.info(f"Successfully built {successful_indexes}/{len(file_paths)} indexes in parallel")
 
     def _rebuild_master_index(self):
-        """STEP 5: Rebuilds the master index.md file with all memory entities."""
+        """STEP 5: Rebuilds the master index.md file with all memory entities.
+
+        Delegates to the shared `rebuild_master_index` (consolidator_agent._shared)
+        which uses `extract_semantic_index` — handling BOTH v2 YAML frontmatter
+        AND the legacy `## SEMANTIC INDEX` JSON block. The prior manual parser
+        only read the legacy format, silently skipping every v2 entity and
+        leaving index.md empty — the root cause of the identify step's
+        duplicate-spawning behavior on entrepreneur-ontology stores.
+        """
+        from ..consolidator_agent._shared import extract_semantic_index, rebuild_master_index
+
         self.logger.info("STEP 5: Rebuilding master index.md...")
 
-        index_entries = []
-
-        # Scan all entity dirs defined by the active ontology
+        # Self-heal: find files without a parseable semantic index and rebuild
+        # them before generating the master index (preserves prior behavior).
+        files_needing_index = []
         for md_file in self._entity_md_files():
             if md_file.name == 'index.md':
                 continue
-
             try:
-                with open(md_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
+                content = md_file.read_text(encoding='utf-8')
+                if extract_semantic_index(content) is None:
+                    files_needing_index.append(md_file)
+            except OSError:
+                continue
+        if files_needing_index:
+            self.logger.info(
+                "MASTER_INDEX_HEAL: rebuilding semantic index for %d file(s)",
+                len(files_needing_index),
+            )
+            self._build_entity_indexes(files_needing_index)
 
-                # Look for SEMANTIC INDEX section
-                if '## SEMANTIC INDEX' in content:
-                    # Extract the JSON from the semantic index
-                    lines = content.split('\n')
-                    in_semantic_index = False
-                    json_lines = []
+        # Delegate to the shared rebuild — ontology-aware entity_dirs, both SI
+        # formats, git stats + memory strength augmentation.
+        try:
+            import git as gitlib
+            repo = gitlib.Repo(self.repo_path)
+        except Exception:
+            repo = None
 
-                    for line in lines:
-                        if line.strip().startswith('## SEMANTIC INDEX'):
-                            in_semantic_index = True
-                            continue
-                        elif in_semantic_index and line.strip().startswith('##'):
-                            break
-                        elif in_semantic_index and line.strip():
-                            json_lines.append(line.strip())
-
-                    if json_lines:
-                        # Parse the JSON and add git stats
-                        try:
-                            semantic_data = json.loads(''.join(json_lines))
-                            if len(semantic_data) < 2:
-                                self.logger.warning(f"Not enough semantic data found in {md_file}")
-                                self._build_entity_indexes([md_file])
-
-                            # Override file path with computed canonical path
-                            # This ensures consistency even if the embedded index has wrong paths
-                            canonical_path = self._get_relative_entity_path(md_file)
-                            llm_path = semantic_data.get('file', '')
-
-                            if llm_path != canonical_path:
-                                self.logger.debug(f"PATH_MISMATCH: {md_file.name} index has '{llm_path}', correcting to '{canonical_path}'")
-
-                            semantic_data['file'] = canonical_path
-
-                            git_stats = self._get_file_git_stats(md_file)
-
-                            # Add git metadata
-                            semantic_data['last_update'] = git_stats['last_update']
-                            semantic_data['number_of_edits'] = git_stats['number_of_edits']
-                            semantic_data['memory_strength'] = self._calculate_memory_strength(
-                                git_stats['number_of_edits'],
-                                git_stats['last_update']
-                            )
-
-                            index_entries.append(semantic_data)
-                        except json.JSONDecodeError as e:
-                            self.logger.warning(f"Could not parse semantic index in {md_file}: {e}")
-                else:
-                    self.logger.warning(f"No semantic index found in {md_file}")
-                    self._build_entity_indexes([md_file])
-            except Exception as e:
-                self.logger.warning(f"Could not process {md_file} for master index: {e}")
-
-        # Sort by memory strength (descending)
-        index_entries.sort(key=lambda x: x.get('memory_strength', 0), reverse=True)
-
-        # Generate master index content
-        master_index_content = f"""# Memory Index for {self.user_id}
-
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-Total entities: {len(index_entries)}
-
-## Entity Index (by memory strength)
-
-"""
-
-        for entry in index_entries:
-            name = entry.get('name', 'Unknown')
-            entity_type = entry.get('type', 'unknown')
-            strength = entry.get('strength', 'Low')
-            memory_strength = entry.get('memory_strength', 0)
-            file_path = entry.get('file', 'unknown')
-            hard_cues = ', '.join(entry.get('hard_cues', [])[:3])  # First 3 cues
-
-            master_index_content += f"""### {name} ({entity_type})
-- **File**: `{file_path}`
-- **Strength**: {strength} (Score: {memory_strength})
-```{entry}```
-
-"""
-
-        # Write master index
-        master_index_path = self.user_path / 'index.md'
-        with open(master_index_path, 'w', encoding='utf-8') as f:
-            f.write(master_index_content)
-
-        self.logger.info(f"MASTER_INDEX_REBUILT: Created {master_index_path} with {len(index_entries)} entities")
+        rebuild_master_index(
+            self.user_path,
+            self.user_id,
+            repo=repo,
+            entity_dirs=self.ontology.entity_dirs(self.repo_path),
+        )
 
     def _parse_commitment_metadata(self, file_path: Path) -> Optional[Dict[str, Any]]:
         """Best-effort parse of a commitment file's ## Metadata block + display name.
