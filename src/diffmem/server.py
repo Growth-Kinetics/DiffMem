@@ -42,6 +42,7 @@ ALLOWED_ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "*")
 ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_RAW.split(",") if o.strip()]
 
 from .api import DiffMemory, onboard_new_user
+from . import __version__
 from .executor import ConsolidatePayload, TaskExecutor, WritePayload, build_executor
 from .ontology.loader import load_ontology
 from .repo_manager import RepoManager
@@ -262,7 +263,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="DiffMem Server",
     description="Git-native memory server with agent-based retrieval",
-    version="0.4.0",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -865,7 +866,7 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": "0.4.0",
+        "version": __version__,
         "architecture": "git_native_agent",
         "active_contexts": len(memory_instances),
         "storage_backend": "local",
@@ -879,7 +880,7 @@ async def health_check():
 async def root():
     return {
         "service": "DiffMem Server",
-        "version": "0.4.0",
+        "version": __version__,
         "description": "Git-native memory server with agent-based retrieval",
         "docs": "/docs",
         "health": "/health",
