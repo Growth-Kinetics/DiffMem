@@ -52,6 +52,15 @@ ontology-agnostic at runtime.
   `self.prompts_path / ...` directly.
 - All LLM calls are synchronous; the caller (`server.py`, executor) is responsible for
   running the agent in a thread pool off the uvicorn event loop.
+- **LLM semantic-index responses are normalized before persisting (v0.4.1).**
+  `_build_single_entity_index()` passes the LLM's build_index JSON through
+  `frontmatter.normalize_semantic_index()` before `merge_frontmatter()`. WHY:
+  models occasionally return nested lists for contractually-flat fields
+  (`hard_cues: ["a", ["b", "c"]]`), and those poisoned files crashed the
+  consolidator's joins/prefilters downstream with `TypeError` (see
+  `consolidator_agent/CONTEXT.md` for the full incident note). This is the
+  ingress guard; the consolidator's `extract_semantic_index` is the repair
+  guard for stores written before v0.4.1.
 
 ## Attention Guidance
 - For ontology-related issues: read `src/diffmem/ontology/loader.py` and the active

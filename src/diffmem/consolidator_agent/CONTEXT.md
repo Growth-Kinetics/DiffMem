@@ -90,3 +90,19 @@ invoked explicitly via `consolidate(tools=["reabsorb"])`. Routine
   ontology requires custom consolidation behavior, add a `consolidator_prompts/`
   key to `schema.json` and extend the loader. Do not silently inherit from the
   personal ontology without documenting the decision.
+- **Semantic-index list fields are normalized at the read/write choke points
+  (v0.4.1).** LLMs occasionally emit NESTED lists for contractually-flat
+  string fields (`hard_cues: ["a", ["b", "c"]]`). Unnormalized, those shapes
+  crashed the consolidate chain with `TypeError` at three sites — the
+  `",".join` report builders in `_redistribute._candidates_block` and
+  `_link._cooccurrence_block`, and the `set(map(str.lower, ...))` prefilter in
+  `_dedupe._overlap` — which is why downstream consumers (ChatBarry) ran
+  dedupe-only for months. Fix is structural, not per-site:
+  `frontmatter.normalize_semantic_index()` (deep-flatten of
+  `hard_cues/soft_cues/emotional_cues/aliases/related_entities`) runs inside
+  `extract_semantic_index()` (READ choke point — repairs already-poisoned
+  stores on next pass) and inside `write_with_semantic_index()` (WRITE choke
+  point — no consolidator path can persist nesting). Regression suite:
+  `tests/test_semantic_index_normalization.py`, including reproduction of the
+  exact production crash shapes. Do NOT add defensive flattening at
+  individual consumers — the choke points are the single source of truth.
