@@ -44,6 +44,19 @@ def _normalize_name(name: str) -> str:
 
 FUZZY_NAME_THRESHOLD = 0.85  # mirrors the dedupe prefilter's same-name notion
 
+
+def _as_str(value: Any) -> str:
+    """Coerce an LLM-produced name/type scalar to str. Lists are space-joined
+    (the LLM occasionally returns e.g. name: ["Maya", "Chen"]; calling .lower()
+    on it crashed ingest jobs on the VPS — 2026-08-18 rebuild incident)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(v).strip() for v in value if str(v).strip())
+    if value is None:
+        return ""
+    return str(value)
+
 class WriterAgent:
     """Orchestrates the process of updating memory files based on a session."""
 
@@ -188,7 +201,7 @@ class WriterAgent:
             target_dir = self.repo_path / rel_folder
             target_dir.mkdir(parents=True, exist_ok=True)
 
-            file_name = entity['name'].lower().replace(' ', '_').replace('.', '') + '.md'
+            file_name = _as_str(entity['name']).lower().replace(' ', '_').replace('.', '') + '.md'
             new_file_path = target_dir / file_name
 
             return {
@@ -475,9 +488,13 @@ class WriterAgent:
                     entity_data = ast.literal_eval(json_str)
 
                     if 'name' in entity_data and 'file' in entity_data:
-                        # Map primary name (exact-lower + normalized)
-                        lookup[entity_data['name'].lower()] = entity_data['file']
-                        lookup[_normalize_name(entity_data['name'])] = entity_data['file']
+                        # Map primary name (exact-lower + normalized). Guarded:
+                        # a stale index.md can carry a list-valued name from a
+                        # pre-normalization build (VPS incident 2026-08-18).
+                        name_str = _as_str(entity_data['name'])
+                        if name_str:
+                            lookup[name_str.lower()] = entity_data['file']
+                            lookup[_normalize_name(name_str)] = entity_data['file']
 
                         # Map all aliases (exact-lower + normalized)
                         for alias in entity_data.get('aliases', []):
@@ -508,6 +525,12 @@ class WriterAgent:
         """
         # Strategy 1: Look up in master index (handles aliases and exact names)
         index_lookup = self._load_master_index_lookup()
+        # Identify-LLM responses can carry non-str names (lists, numbers) —
+        # coerce once; every use below is a string op.
+        entity_name = _as_str(entity_name)
+        if not entity_name:
+            self.logger.warning("ENTITY_RESOLVE_SKIPPED: empty/coercion-failed name")
+            return None
         entity_name_lower = entity_name.lower()
 
         if entity_name_lower in index_lookup:

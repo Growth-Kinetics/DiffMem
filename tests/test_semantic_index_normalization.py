@@ -221,3 +221,72 @@ def test_llm_index_response_normalized_before_write(tmp_path: Path):
     out = _shared.write_with_semantic_index("# Theme\n\n- Some prose.\n", bad_llm)
     fm, _ = parse_frontmatter(out)
     assert fm["hard_cues"] == ["alpha", "beta", "gamma", "delta"]
+
+
+# --- scalar-field coercion (VPS rebuild incident 2026-08-18) -------------------
+# An LLM wrote name/type as LISTS (name: ["Maya","Chen"], type: ["human"]) —
+# the dedupe prefilter and writer lookup called .lower() on them and killed
+# every rebuild ingest job with AttributeError: 'list' object has no attribute
+# 'lower' (HTTP 500: Job ... failed). Scalar-contract fields are now coerced
+# at the normalize choke points AND guarded at the crash sites.
+
+
+def test_normalize_coerces_string_fields():
+    si = normalize_semantic_index({
+        "name": ["Maya", "Chen"],
+        "type": ["human"],
+        "role": 42,
+        "strength": None,
+        "hard_cues": ["ok"],
+    })
+    assert si["name"] == "Maya Chen"
+    assert si["type"] == "human"
+    assert si["role"] == "42"
+    assert si["strength"] == ""
+    assert si["hard_cues"] == ["ok"]  # untouched list contract
+
+
+def test_dedupe_prefilter_survives_list_type():
+    """The exact VPS crash: type-as-list in the prefilter's .lower()."""
+    from pathlib import Path as P
+    ents = [
+        {"file": P("a.md"), "path": "a.md",
+         "semantic_index": normalize_semantic_index({"type": ["human"], "name": ["Maya", "Chen"], "hard_cues": [], "related_entities": []})},
+        {"file": P("b.md"), "path": "b.md",
+         "semantic_index": normalize_semantic_index({"type": "human", "name": "Maya Chen", "hard_cues": [], "related_entities": []})},
+    ]
+    pairs = _dedupe.find_candidate_pairs(ents)  # must not raise
+    # Post-coercion the two are identical names → similarity 1.0 candidate.
+    assert len(pairs) == 1
+
+
+def test_writer_lookup_survives_list_name_in_index(tmp_path: Path):
+    """index.md written by a pre-fix build can carry a list-valued name —
+    the writer lookup must not crash rebuilding from it."""
+    from tests._fixtures import build_worktree
+    from diffmem.writer_agent.agent import WriterAgent
+    wt = build_worktree(tmp_path)
+    (wt / "index.md").write_text(
+        "# Memory Index for alex\n\n## Entity Index (by memory strength)\n\n"
+        "### Maya Chen (human)\n"
+        "- **File**: `memories/people/maya_chen.md`\n"
+        "- **Strength**: High (Score: 0.9)\n"
+        "```" + json.dumps({"name": ["Maya", "Chen"], "file": "memories/people/maya_chen.md", "type": "human", "aliases": ["M"]}) + "```\n",
+        encoding="utf-8",
+    )
+    w = WriterAgent(repo_path=str(wt), user_id="alex", openrouter_api_key="k", model="m")
+    lookup = w._load_master_index_lookup()  # must not raise
+    assert "maya chen" in lookup  # coerced key present
+
+
+def test_writer_resolve_coerces_list_name_from_identify(tmp_path: Path):
+    """Identify-LLM handing a list name into resolve must coerce, not crash."""
+    from tests._fixtures import build_worktree, write_person
+    from diffmem.writer_agent.agent import WriterAgent
+    wt = build_worktree(tmp_path)
+    write_person(wt, filename="maya_chen.md", name="Maya Chen", body="VP.", semantic={})
+    from diffmem.consolidator_agent._shared import rebuild_master_index
+    rebuild_master_index(wt, "alex")
+    w = WriterAgent(repo_path=str(wt), user_id="alex", openrouter_api_key="k", model="m")
+    resolved = w._resolve_entity_file_path(["Maya", "Chen"], "people")  # type: ignore[arg-type]
+    assert resolved == wt / "memories" / "people" / "maya_chen.md"

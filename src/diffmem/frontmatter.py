@@ -116,6 +116,31 @@ SI_LIST_FIELDS = (
     "related_entities",
 )
 
+#: Fields of the semantic index that are contractually scalar STRINGS.
+#: LLMs occasionally return lists here too (name: ["Maya", "Chen"]) — every
+#: downstream consumer calls .lower()/f-string/etc. on them, so a list poisons
+#: the writer lookup, the dedupe prefilter, and index.md. Coerced to a single
+#: joined string (order preserved) on read AND write.
+SI_STRING_FIELDS = (
+    "name",
+    "type",
+    "role",
+    "strength",
+)
+
+
+def coerce_str(value: Any) -> str:
+    """Coerce an LLM-produced scalar-contract value to str. Lists/tuples are
+    space-joined (order preserved, nested flattened first); other non-str
+    scalars are stringified; None/empty → ""."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple)):
+        return " ".join(flatten_str_list(value))
+    return str(value).strip()
+
 
 def flatten_str_list(values: Any) -> List[str]:
     """Deep-flatten an arbitrarily nested list into flat `List[str]`.
@@ -153,12 +178,16 @@ def flatten_str_list(values: Any) -> List[str]:
 
 def normalize_semantic_index(si: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Return `si` with every :data:`SI_LIST_FIELDS` entry flattened to a flat
-    string list (see module notes for why). Mutates and returns the same dict
-    for in-place callers; non-dict input is replaced with an empty dict.
-    Unknown fields are passed through untouched."""
+    string list and every :data:`SI_STRING_FIELDS` entry coerced to a string
+    (see module notes for why). Mutates and returns the same dict for in-place
+    callers; non-dict input is replaced with an empty dict. Unknown fields are
+    passed through untouched."""
     if not isinstance(si, dict):
         return {}
     for field in SI_LIST_FIELDS:
         if field in si:
             si[field] = flatten_str_list(si[field])
+    for field in SI_STRING_FIELDS:
+        if field in si:
+            si[field] = coerce_str(si[field])
     return si

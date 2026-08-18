@@ -32,7 +32,9 @@ MIN_OVERLAP_HARD_CUES = 3
 
 
 def _name_similarity(a: str, b: str) -> float:
-    return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
+    # str() coercion: identify/LLM paths can hand through non-str names; a list
+    # here used to raise AttributeError (VPS rebuild incident 2026-08-18).
+    return difflib.SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio()
 
 
 def _overlap(a: List[str], b: List[str]) -> int:
@@ -72,7 +74,7 @@ def find_candidate_pairs(
         for j in range(i + 1, n):
             b = entities[j]
             si_b = b["semantic_index"]
-            if (si_a.get("type") or "").lower() != (si_b.get("type") or "").lower():
+            if str(si_a.get("type") or "").lower() != str(si_b.get("type") or "").lower():
                 continue
             name_a = si_a.get("name", "") or a["file"].stem
             name_b = si_b.get("name", "") or b["file"].stem

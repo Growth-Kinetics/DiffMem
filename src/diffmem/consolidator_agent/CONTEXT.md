@@ -122,6 +122,16 @@ invoked explicitly via `consolidate(tools=["reabsorb"])`. Routine
   `tests/test_semantic_index_normalization.py`, including reproduction of the
   exact production crash shapes. Do NOT add defensive flattening at
   individual consumers — the choke points are the single source of truth.
+- **Scalar-contract fields are coerced too (v0.5.1).** The same LLM failure
+  mode hits STRING-contract fields: `name: ["Maya","Chen"]` or `type:
+  ["human"]`. `.lower()` on those killed every rebuild ingest job on the VPS
+  (2026-08-18: HTTP 500 `AttributeError: 'list' object has no attribute
+  'lower'` — dedupe prefilter `_dedupe.py:75` and the writer's
+  `_load_master_index_lookup` / create-filename / resolve paths).
+  `normalize_semantic_index` now coerces `name/type/role/strength` via
+  `coerce_str` (lists → space-joined), AND the writer/dedupe crash sites
+  guard defensively (`_as_str`) because a stale index.md from a pre-fix
+  build can still carry poisoned entries until the next rebuild.
 
 ## MANAGEMENT SURFACE (v0.5.0)
 
