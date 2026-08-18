@@ -69,3 +69,13 @@ ontology-agnostic at runtime.
   in `_create_new_entities` / `_update_existing_entities` (parallel but LLM-bound).
 - For master index staleness: `_rebuild_master_index()` scans `_entity_md_files()` and
   re-extracts SEMANTIC INDEX blocks — check that entity files have a `## SEMANTIC INDEX`.
+- For duplicate entity creation: `_resolve_entity_file_path()` resolves in tiers —
+  exact index lookup → normalized index key (`_normalize_name`: lowercase,
+  diacritics stripped, punctuation removed) → computed filename → fuzzy
+  (`SequenceMatcher` ≥ `FUZZY_NAME_THRESHOLD`=0.85 over index names+aliases,
+  plus stem containment ≥4 chars) → filesystem stem scan. Structured log lines:
+  `ENTITY_RESOLVED_INDEX` / `_COMPUTED` / `_NORMALIZED` / `_FUZZY` / `_NOT_FOUND`.
+  A resolve miss is what turns a transcript mention into a NEW file — before
+  v0.4.1 only the exact-lower + computed tiers existed and spelling variants
+  duplicated freely. The identify prompt (ontology side) instructs the LLM to
+  check aliases first; these tiers are the deterministic backstop.

@@ -80,6 +80,22 @@ invoked explicitly via `consolidate(tools=["reabsorb"])`. Routine
 - **Survivor = higher memory_strength.** Loser's filename is preserved as an
   `alias` in the survivor's SEMANTIC INDEX so writer-agent recognition catches
   it on future sessions.
+- **Merge propagation = ALL loser name variants (v0.4.1+).** Not just the
+  loser's file stem — its SEMANTIC INDEX `name` AND every alias land in the
+  survivor's aliases (`_dedupe.loser_name_variants` + `_ensure_aliases`).
+  This is the alias-redirect trick: any old spelling resolves to the survivor
+  via the writer's normalized/fuzzy index lookup, so the loser is never
+  re-created by later sessions. The LLM merge payload may omit them; the
+  propagation layer adds them regardless of what the LLM returned.
+- **Prefilter surfaces, the judge decides (v0.4.1+).** `find_candidate_pairs`
+  uses ANY-ONE-signal corroboration (name similarity ≥0.8 OR stem containment
+  OR ≥2 shared related_entities OR ≥3 shared hard_cues) — the name gate is no
+  longer a hard precondition. WHY: nickname-level variants of the same person
+  ("Maya Chen" vs "Maya B.", ratio 0.63) previously could never surface even
+  with full corroboration, so duplicates accumulated. The LLM judge
+  (same_entity=true AND confidence=high) remains the sole merge arbiter;
+  corroborated-but-different pairs surface and get rejected (encoded in the
+  e2e scripted-judge fixture).
 - **No coupling to writer-agent internals.** Where helpers are needed
   (e.g. fuzzy text matching, index rebuilding), prefer extracting to a shared
   module rather than reaching into `writer_agent.agent.WriterAgent` directly.

@@ -9,13 +9,40 @@ import git
 import json
 import logging
 import math
+import re
+import unicodedata
+from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from diffmem.ontology.loader import OntologyProfile, load_ontology
+
+# --- name normalization + fuzzy matching --------------------------------------
+#
+# WHY: the writer's entity resolution used to be exact-lowercase on index
+# names/aliases plus a computed filename. Spelling/nickname variants
+# ("Benjamin-Powell", "Benjamen Powell", "benjimin") missed and spawned
+# duplicate entity files — the #1 duplicate-source in ChatBarry production.
+# Two deterministic tiers fix it without LLM calls: key normalization
+# (punctuation/diacritics/whitespace fold) and a similarity tier for typos.
+
+
+def _normalize_name(name: str) -> str:
+    """Fold a name to a canonical lookup key: lowercase, diacritics stripped
+    (NFKD), all non-alphanumerics removed, whitespace collapsed.
+    "Jean-Pierre Ó Sé" → "jeanpierreose"."""
+    if not isinstance(name, str):
+        return ""
+    decomposed = unicodedata.normalize("NFKD", name)
+    ascii_folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    collapsed = re.sub(r"\s+", " ", ascii_folded.strip().lower())
+    return re.sub(r"[^a-z0-9 ]", "", collapsed).replace(" ", "")
+
+
+FUZZY_NAME_THRESHOLD = 0.85  # mirrors the dedupe prefilter's same-name notion
 
 class WriterAgent:
     """Orchestrates the process of updating memory files based on a session."""
@@ -372,10 +399,48 @@ class WriterAgent:
                 'total_updates': 0
             }
 
+    def _fuzzy_index_match(
+        self, entity_name: str, index_lookup: Dict[str, str]
+    ) -> Optional[Tuple[float, str, str]]:
+        """Best fuzzy match of `entity_name` against the index lookup keys.
+
+        Returns (score, matched_key, file_path) for the best candidate with
+        similarity ≥ FUZZY_NAME_THRESHOLD (or a stem-containment match — the
+        same disambiguator heuristic the dedupe prefilter uses), else None.
+        Normalized comparison; deterministic; no LLM.
+        """
+        query = _normalize_name(entity_name)
+        if not query or not index_lookup:
+            return None
+        best: Optional[Tuple[float, str, str]] = None
+        for key, rel in index_lookup.items():
+            candidate = _normalize_name(key)
+            if not candidate:
+                continue
+            score = SequenceMatcher(None, query, candidate).ratio()
+            # Stem containment: one slug containing the other (e.g. the dedupe
+            # disambiguator case "maya" inside "maya_chen"). Both directions.
+            # Min-length 4 guard stops tiny fragments ("ai") matching everything.
+            if (
+                query != candidate
+                and min(len(query), len(candidate)) >= 4
+                and (query in candidate or candidate in query)
+            ):
+                score = max(score, FUZZY_NAME_THRESHOLD + 0.01)  # just over the bar
+            if score >= FUZZY_NAME_THRESHOLD and (best is None or score > best[0]):
+                best = (score, key, rel)
+        return best
+
     def _load_master_index_lookup(self) -> Dict[str, str]:
         """
         Loads the master index and creates a name->path lookup dict.
         Handles aliases and name variations.
+
+        Each entity's name and aliases are indexed under BOTH exact-lowercase
+        and normalized keys (see _normalize_name) so punctuation, casing,
+        diacritics, and whitespace variants resolve deterministically — the
+        exact-lower map alone let "Benjamin-Powell" / "benjamin powell" miss
+        and spawn duplicate files.
 
         Returns:
             Dict mapping entity names (and aliases) to file paths
@@ -410,12 +475,16 @@ class WriterAgent:
                     entity_data = ast.literal_eval(json_str)
 
                     if 'name' in entity_data and 'file' in entity_data:
-                        # Map primary name
+                        # Map primary name (exact-lower + normalized)
                         lookup[entity_data['name'].lower()] = entity_data['file']
+                        lookup[_normalize_name(entity_data['name'])] = entity_data['file']
 
-                        # Map all aliases
+                        # Map all aliases (exact-lower + normalized)
                         for alias in entity_data.get('aliases', []):
+                            if not isinstance(alias, str):
+                                continue  # tolerate malformed LLM output
                             lookup[alias.lower()] = entity_data['file']
+                            lookup[_normalize_name(alias)] = entity_data['file']
 
                 except Exception as e:
                     self.logger.debug(f"Could not parse entity in index: {e}")
@@ -468,6 +537,34 @@ class WriterAgent:
         if entity_file.exists():
             self.logger.debug(f"ENTITY_RESOLVED_COMPUTED: {entity_name} → {entity_file}")
             return entity_file
+
+        # Strategy 2b: Normalized index lookup (punctuation / diacritics /
+        # whitespace variants map to the same key — deterministic, no LLM).
+        normalized = _normalize_name(entity_name)
+        if normalized in index_lookup:
+            index_path = self.user_path / index_lookup[normalized]
+            if index_path.exists():
+                self.logger.info(
+                    "ENTITY_RESOLVED_NORMALIZED: %s (norm=%s) → %s",
+                    entity_name, normalized, index_path,
+                )
+                return index_path
+
+        # Strategy 2c: Fuzzy match over index names + aliases. Catches typos
+        # and nicknames the exact/normalized tiers miss ("Benjamen" →
+        # "Benjamin", ratio 0.96). Threshold mirrors the dedupe prefilter's
+        # notion of "same name"; stem containment reuses the dedupe
+        # disambiguator heuristic (a slug that contains the other).
+        fuzzy_hit = self._fuzzy_index_match(entity_name, index_lookup)
+        if fuzzy_hit is not None:
+            score, matched_key, rel = fuzzy_hit
+            index_path = self.user_path / rel
+            if index_path.exists():
+                self.logger.info(
+                    "ENTITY_RESOLVED_FUZZY: %s ≈ %s (score=%.2f) → %s",
+                    entity_name, matched_key, score, index_path,
+                )
+                return index_path
 
         # Strategy 3: Fuzzy search across all ontology entity dirs
         for md_file in self._entity_md_files():

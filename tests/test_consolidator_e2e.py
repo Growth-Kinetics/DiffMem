@@ -202,6 +202,19 @@ def _scripted_llm():
 
     def call(prompt: str, is_json: bool):
         if "Dedupe Judge" in prompt:
+            # Maya pair: approve. Sam Rivera is a DIFFERENT person who merely
+            # shares corroborating overlap with Maya (related entities + cues)
+            # — the relaxed prefilter surfaces the pair, and the judge is
+            # expected to reject it. This encodes the prefilter/judge contract:
+            # corroboration surfaces, the judge decides. Match on the LABELED
+            # path lines only — file CONTENTS legitimately mention sam_rivera.
+            judged_paths = re.findall(r"ENTITY [AB] — file: `?(.+?)`?\n", prompt)
+            if any("sam_rivera" in p for p in judged_paths):
+                return {
+                    "same_entity": False,
+                    "confidence": "high",
+                    "rationale": "Sam Rivera is a different person from Maya.",
+                }
             return {
                 "same_entity": True,
                 "confidence": "high",

@@ -42,9 +42,19 @@ def _overlap(a: List[str], b: List[str]) -> int:
 def find_candidate_pairs(entities: List[Dict[str, Any]]) -> List[Tuple[Dict, Dict]]:
     """Pairs of entity dicts that pass the prefilter.
 
-    Rule: same `type`, name similarity ≥ 0.8, AND
-    (≥2 overlapping related_entities OR ≥3 overlapping hard_cues OR
-     one filename is the other's prefix/contains the other — disambiguator case).
+    Rule: same `type`, AND at least ONE corroborating signal:
+      - name similarity ≥ NAME_SIMILARITY_THRESHOLD, OR
+      - one filename stem contains the other (disambiguator case), OR
+      - ≥ MIN_OVERLAP_RELATED overlapping related_entities, OR
+      - ≥ MIN_OVERLAP_HARD_CUES overlapping hard_cues.
+
+    The name-similarity gate used to be a hard PREcondition applied before the
+    overlap counts — nickname-level variants of the same person ("Maya Chen"
+    vs "Maya B.", ratio 0.63) could never surface even with full cue/related
+    corroboration, so the writer kept minting duplicates. The prefilter only
+    bounds LLM cost; the judge (`same_entity=true AND confidence=high`)
+    remains the merge arbiter, so corroborated-but-differently-spelled pairs
+    now reach it.
     """
     pairs: List[Tuple[Dict, Dict]] = []
     n = len(entities)
@@ -64,16 +74,19 @@ def find_candidate_pairs(entities: List[Dict[str, Any]]) -> List[Tuple[Dict, Dic
             disambiguator_match = (
                 stem_a in stem_b or stem_b in stem_a
             ) and stem_a != stem_b
-            if sim < NAME_SIMILARITY_THRESHOLD and not disambiguator_match:
-                continue
+            # NOTE: no hard name gate — any ONE signal below surfaces the
+            # pair; the LLM judge remains the merge arbiter (see docstring).
             rel_overlap = _overlap(
                 si_a.get("related_entities", []), si_b.get("related_entities", [])
             )
             cue_overlap = _overlap(si_a.get("hard_cues", []), si_b.get("hard_cues", []))
+            # Any ONE corroborating signal surfaces the pair; the LLM judge
+            # (same_entity + high confidence) remains the merge arbiter.
             if (
-                rel_overlap >= MIN_OVERLAP_RELATED
-                or cue_overlap >= MIN_OVERLAP_HARD_CUES
+                sim >= NAME_SIMILARITY_THRESHOLD
                 or disambiguator_match
+                or rel_overlap >= MIN_OVERLAP_RELATED
+                or cue_overlap >= MIN_OVERLAP_HARD_CUES
             ):
                 pairs.append((a, b))
                 logger.info(
@@ -172,8 +185,9 @@ def merge_pair(
         logger.warning("DEDUPE_MERGE_LLM_FAIL: falling back to deterministic merge")
         merged = _deterministic_merge(survivor, loser)
     else:
-        # Ensure the alias from the loser is present in the SEMANTIC INDEX.
-        merged = _ensure_alias(merged, loser["file"].stem)
+        # All loser name variants (stem + name + aliases) redirect to the
+        # survivor — prevents the writer re-creating the loser on old spellings.
+        merged = _ensure_aliases(merged, loser_name_variants(loser))
     return merged
 
 
@@ -187,7 +201,10 @@ def _deterministic_merge(survivor: Dict[str, Any], loser: Dict[str, Any]) -> str
     si_s = dict(survivor["semantic_index"])
     si_l = loser["semantic_index"]
 
-    aliases = list(dict.fromkeys((si_s.get("aliases") or []) + (si_l.get("aliases") or []) + [loser["file"].stem]))
+    # All loser name variants (stem + name + aliases) redirect to the survivor.
+    aliases = list(dict.fromkeys(
+        (si_s.get("aliases") or []) + (si_l.get("aliases") or []) + loser_name_variants(loser)
+    ))
     hard_cues = list(dict.fromkeys((si_s.get("hard_cues") or []) + (si_l.get("hard_cues") or [])))
     soft_cues = list(dict.fromkeys((si_s.get("soft_cues") or []) + (si_l.get("soft_cues") or [])))
     emo_cues = list(dict.fromkeys((si_s.get("emotional_cues") or []) + (si_l.get("emotional_cues") or [])))
@@ -203,19 +220,42 @@ def _deterministic_merge(survivor: Dict[str, Any], loser: Dict[str, Any]) -> str
     return write_with_semantic_index(body, si_s)
 
 
-def _ensure_alias(merged: str, loser_stem: str) -> str:
-    """If the merged content has a SEMANTIC INDEX block, make sure the loser's
-    stem is in `aliases`. If parsing fails or the block is missing, leave as-is
-    (caller may log)."""
+def loser_name_variants(loser: Dict[str, Any]) -> List[str]:
+    """Every name the LOSER was known by — stem, SEMANTIC INDEX name, and all
+    its aliases. All of these must land in the survivor's aliases after a
+    merge, or the writer's identify step will re-create the loser file the
+    next time a transcript uses one of those spellings (the alias-redirect
+    trick, same idea as Wikidata merge redirects)."""
+    si = loser.get("semantic_index") or {}
+    variants = [loser["file"].stem]
+    name = si.get("name")
+    if isinstance(name, str) and name.strip():
+        variants.append(name.strip())
+    for alias in si.get("aliases") or []:
+        if isinstance(alias, str) and alias.strip():
+            variants.append(alias.strip())
+    # Order-preserving dedupe (stem first).
+    return list(dict.fromkeys(v for v in variants if v))
+
+
+def _ensure_aliases(merged: str, names: List[str]) -> str:
+    """If the merged content has a SEMANTIC INDEX, make sure every name in
+    `names` is present in `aliases`. If parsing fails or the block is missing,
+    leave as-is (caller may log)."""
     from ._shared import extract_semantic_index, write_with_semantic_index, strip_semantic_index
 
     si = extract_semantic_index(merged)
     if si is None:
         return merged
-    aliases = si.get("aliases") or []
-    if loser_stem not in aliases:
-        aliases = list(aliases) + [loser_stem]
-        si["aliases"] = aliases
+    aliases = list(si.get("aliases") or [])
+    changed = False
+    for n in names:
+        if n not in aliases:
+            aliases.append(n)
+            changed = True
+    if not changed:
+        return merged
+    si["aliases"] = aliases
     return write_with_semantic_index(strip_semantic_index(merged), si)
 
 
