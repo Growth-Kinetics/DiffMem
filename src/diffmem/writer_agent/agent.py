@@ -162,6 +162,27 @@ class WriterAgent:
         with open(semantic_index_path, 'r', encoding='utf-8') as f:
             semantic_index = f.read()
 
+        # Truncate the index to stay under the model's context window. index.md
+        # is sorted by memory_strength (highest first), so we keep the top
+        # entries and drop the long tail. ~60K chars ≈ ~15K tokens, leaving
+        # ~110K for the memory_input + prompt overhead on a 128K-token model.
+        MAX_INDEX_CHARS = 60_000
+        if len(semantic_index) > MAX_INDEX_CHARS:
+            # Cut at a line boundary to avoid mid-JSON truncation.
+            cut = semantic_index.rfind('\n', 0, MAX_INDEX_CHARS)
+            if cut < MAX_INDEX_CHARS * 0.8:
+                cut = MAX_INDEX_CHARS  # fallback: hard cut
+            total = semantic_index.count('\n### ')
+            shown = semantic_index[:cut].count('\n### ')
+            semantic_index = (
+                semantic_index[:cut]
+                + f"\n--- (index truncated: showing top {shown} of {total} entities by memory strength) ---\n"
+            )
+            self.logger.info(
+                "INDEX_TRUNCATED: %d/%d entities (%d → %d chars)",
+                shown, total, len(semantic_index) + len(cut), cut,
+            )
+
         system_prompt = self._load_prompt("0_system")
         prompt_template = self._load_prompt("1_identify_entities")
         prompt = prompt_template.format(
