@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..frontmatter import (
     parse_frontmatter,
     merge_frontmatter,
+    normalize_semantic_index,
     strip_legacy_semantic_index as _strip_legacy_block,
 )
 
@@ -57,10 +58,15 @@ def extract_semantic_index(content: str) -> Optional[Dict[str, Any]]:
     Prefers YAML frontmatter (the v2 location); falls back to the legacy
     trailing `## SEMANTIC INDEX` JSON block for files not yet migrated.
     Returns None only when NEITHER is present.
+
+    The returned dict is NORMALIZED: every contractually-flat list field
+    (cues, aliases, related_entities) is deep-flattened to List[str]. LLMs
+    occasionally write nested lists into these fields; unnormalized values
+    crash the consolidator's report joins and set() prefilters downstream.
     """
     fm, _ = parse_frontmatter(content)
     if fm is not None:
-        return fm
+        return normalize_semantic_index(fm)
     # Legacy trailing-block fallback.
     if SEMANTIC_INDEX_HEADER not in content:
         return None
@@ -78,7 +84,7 @@ def extract_semantic_index(content: str) -> Optional[Dict[str, Any]]:
     if not json_lines:
         return None
     try:
-        return json.loads("".join(json_lines))
+        return normalize_semantic_index(json.loads("".join(json_lines)))
     except json.JSONDecodeError as e:
         logger.warning("SEMANTIC_INDEX_PARSE_FAIL: err=%s", e)
         return None
@@ -95,10 +101,13 @@ def write_with_semantic_index(content: str, semantic_index: Dict[str, Any]) -> s
 
     Replaces the legacy trailing-block write: structured fields now live only in
     frontmatter. Any trailing SEMANTIC INDEX block is stripped (migration).
+    The descriptor is NORMALIZED first (flat string lists for cues/aliases/
+    related_entities) so no write path — consolidator merge, redistribute's
+    LLM-built contexts, or future management ops — can persist nested lists.
     """
     # `file` is a path computed at read time (scan_entities sets it); never store it.
     updates = {k: v for k, v in semantic_index.items() if k != "file"}
-    return merge_frontmatter(content, updates)
+    return merge_frontmatter(content, normalize_semantic_index(updates))
 
 
 # --- index.md scanning --------------------------------------------------------
