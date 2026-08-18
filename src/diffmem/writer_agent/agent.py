@@ -180,7 +180,7 @@ class WriterAgent:
             )
             self.logger.info(
                 "INDEX_TRUNCATED: %d/%d entities (%d → %d chars)",
-                shown, total, len(semantic_index) + len(cut), cut,
+                shown, total, len(semantic_index), cut,
             )
 
         system_prompt = self._load_prompt("0_system")
