@@ -406,3 +406,27 @@ def test_http_merge_job_path(monkeypatch, tmp_path):
     assert "job_id" in body["metadata"]
     assert body["losers_merged"] == ["memories/people/maya_b.md"]
     assert not (wt / "memories" / "people" / "maya_b.md").exists()
+
+
+def test_http_cross_type_merge_maps_to_400(monkeypatch, tmp_path):
+    """ManagementError raised inside an LLM manage JOB must surface as HTTP 400
+    (embedded via _manage_work), not an opaque executor 500."""
+    from tests._fixtures import build_worktree as bw
+
+    wt = bw(tmp_path)
+    write_person(wt, filename="maya.md", name="Maya", body="VP.", semantic={})
+    (wt / "memories" / "contexts").mkdir(exist_ok=True)
+    (wt / "memories" / "contexts" / "theme.md").write_text(
+        "---\nname: theme\ntype: concept\naliases: []\n---\n# Theme\n",
+        encoding="utf-8",
+    )
+    from diffmem.api import DiffMemory
+    monkeypatch.setenv("DEFAULT_MODEL", "test-model")
+    memory = DiffMemory(str(wt), "alex", "dummy", "test-model")
+    client = _http_client(monkeypatch, tmp_path, memory)
+    r = client.post("/memory/alex/manage/merge", json={
+        "survivor_path": "memories/people/maya.md",
+        "loser_paths": ["memories/contexts/theme.md"],
+    })
+    assert r.status_code == 400, r.text
+    assert "cross-type" in r.json()["detail"]

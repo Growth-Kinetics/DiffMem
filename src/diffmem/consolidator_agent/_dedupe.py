@@ -203,9 +203,18 @@ def _deterministic_merge(survivor: Dict[str, Any], loser: Dict[str, Any]) -> str
     """Fallback if the LLM returns nothing usable. Preserves both bodies,
     rebuilds a sane SEMANTIC INDEX from the union."""
     from ._shared import strip_semantic_index
+    from ..frontmatter import parse_frontmatter
 
-    body_s = strip_semantic_index(survivor["content"]).rstrip()
-    body_l = strip_semantic_index(loser["content"]).rstrip()
+    def _body(content: str) -> str:
+        # Strip BOTH the legacy SI block and frontmatter — the merged body is
+        # prose only; structured metadata is re-merged at write time
+        # (write_with_semantic_index). Embedding the loser's frontmatter in
+        # the body produced nested `---` blocks in merged files.
+        _, body = parse_frontmatter(strip_semantic_index(content))
+        return body.rstrip()
+
+    body_s = _body(survivor["content"])
+    body_l = _body(loser["content"])
     si_s = dict(survivor["semantic_index"])
     si_l = loser["semantic_index"]
 

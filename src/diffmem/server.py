@@ -767,6 +767,27 @@ async def consolidate(
 # the master index. See consolidator_agent/management.py.
 
 
+def _manage_work(work):
+    """Wrap an LLM manage op's work thunk: ManagementError (user input) is
+    returned as a `manage_error` field in the job result so the route can map
+    it to HTTP 400 — the executor's failure path would otherwise surface it as
+    an opaque 500."""
+    def wrapped():
+        try:
+            return work()
+        except ManagementError as e:
+            return {"status": "error", "manage_error": str(e)}
+    return wrapped
+
+
+def _manage_job_response(resp: dict) -> dict:
+    """Post-process a manage job response: map an embedded ManagementError to
+    HTTP 400; pass everything else through."""
+    if isinstance(resp, dict) and resp.get("manage_error"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(resp["manage_error"]))
+    return resp
+
+
 def _manage_guard(executor: TaskExecutor) -> None:
     """LLM-backed manage ops (merge, add-note) execute via the executor's work
     thunk — only the inline executor runs thunks. HatchetExecutor would silently
@@ -797,9 +818,10 @@ async def manage_merge(user_id: str, request: ManageMergeRequest, authenticated:
     job (inline executor). dry_run returns previews without committing (sync)."""
     memory = get_memory_instance(user_id)
     executor: TaskExecutor = app.state.executor
+    _manage_guard(executor)
+
     if request.dry_run:
-        # Preview: LLM still needed, but no commit — run as a job too; the UI polls.
-        _manage_guard(executor)
+        # Preview: LLM still needed, but no commit — sync job; the UI awaits.
 
         def work():
             return memory.manage_merge(
@@ -809,10 +831,9 @@ async def manage_merge(user_id: str, request: ManageMergeRequest, authenticated:
 
         resp = await _submit_and_respond(
             executor=executor, submit_fn=executor.submit_consolidate,
-            user_id=user_id, work=work, payload=None, callback_url=None, sync=True,
+            user_id=user_id, work=_manage_work(work), payload=None, callback_url=None, sync=True,
         )
-        return resp
-    _manage_guard(executor)
+        return _manage_job_response(resp)
 
     def work():
         return memory.manage_merge(
@@ -822,8 +843,9 @@ async def manage_merge(user_id: str, request: ManageMergeRequest, authenticated:
 
     resp = await _submit_and_respond(
         executor=executor, submit_fn=executor.submit_consolidate,
-        user_id=user_id, work=work, payload=None, callback_url=None, sync=None,
+        user_id=user_id, work=_manage_work(work), payload=None, callback_url=None, sync=None,
     )
+    resp = _manage_job_response(resp)
     if resp.get("status") == "success":
         _spawn_background(backup_user(user_id))
     return resp
@@ -841,8 +863,9 @@ async def manage_add_note(user_id: str, request: ManageAddNoteRequest, authentic
 
     resp = await _submit_and_respond(
         executor=executor, submit_fn=executor.submit_consolidate,
-        user_id=user_id, work=work, payload=None, callback_url=None, sync=None,
+        user_id=user_id, work=_manage_work(work), payload=None, callback_url=None, sync=None,
     )
+    resp = _manage_job_response(resp)
     if resp.get("status") == "success":
         _spawn_background(backup_user(user_id))
     return resp

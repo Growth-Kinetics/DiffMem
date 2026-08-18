@@ -157,7 +157,10 @@ class ManagementAgent:
     ) -> None:
         if not model:
             raise ValueError("model must be set via argument or DEFAULT_MODEL env var")
-        self.repo_path = Path(repo_path)
+        # Resolve once: _safe_rel() resolves the paths it validates, and
+        # relativizing a resolved path against an unresolved worktree root
+        # breaks on symlinked roots (macOS /tmp vs /private/tmp).
+        self.repo_path = Path(repo_path).resolve()
         self.user_id = user_id
         self.model = model
         self.prompts_path = Path(__file__).parent / "prompts"
