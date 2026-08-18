@@ -197,6 +197,15 @@ class WriterAgent:
 
         entities_to_create = response.get('entities_to_create', [])
         entities_to_update = response.get('entities_to_update', [])
+        # Defensive coercion: LLMs occasionally return int counts instead of
+        # arrays (e.g. {"entities_to_create": 3} instead of [...]). Without
+        # this, len(int) raises TypeError and kills the ingest job.
+        if not isinstance(entities_to_create, list):
+            entities_to_create = []
+        if not isinstance(entities_to_update, list):
+            entities_to_update = []
+        response['entities_to_create'] = entities_to_create
+        response['entities_to_update'] = entities_to_update
 
         self.logger.info(f"Identified {len(entities_to_create)} new entities and {len(entities_to_update)} entities to update")
         return response
