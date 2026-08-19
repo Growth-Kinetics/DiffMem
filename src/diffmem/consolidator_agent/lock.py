@@ -84,17 +84,28 @@ class ConsolidatorLock:
         started_at = data.get("started_at", "")
         if not isinstance(pid, int) or pid <= 0:
             return True
-        if _pid_alive(pid):
-            return False
+        # Age check FIRST: a lock held longer than STALE_AFTER_SECONDS is
+        # stale regardless of PID liveness. The prior code returned False
+        # (not stale) as soon as the PID was alive — so a genuinely long-
+        # running operation (e.g. onboarding consolidate on 1000+ entities:
+        # O(n²) dedupe pairs × LLM judge+merge) held the lock indefinitely,
+        # blocking all management operations (VPS incident 2026-08-18).
         parsed = _parse_iso(started_at)
         if parsed is None:
-            # Dead PID + unparseable timestamp → safe to reclaim.
-            return True
+            # Unparseable timestamp → reclaim only if PID is dead.
+            return not _pid_alive(pid)
         now = datetime.now(timezone.utc)
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
         age = (now - parsed).total_seconds()
-        return age >= STALE_AFTER_SECONDS
+        if age >= STALE_AFTER_SECONDS:
+            logger.info(
+                "LOCK_STALE_BY_AGE: pid=%s age=%ds threshold=%ds",
+                pid, int(age), STALE_AFTER_SECONDS,
+            )
+            return True
+        # Lock is young enough — only stale if the PID is dead.
+        return not _pid_alive(pid)
 
     def __enter__(self) -> "ConsolidatorLock":
         self.lock_dir.mkdir(parents=True, exist_ok=True)
