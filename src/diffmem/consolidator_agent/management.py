@@ -244,6 +244,8 @@ class ManagementAgent:
         strategy: str = "llm",
         context: Optional[str] = None,
         dry_run: bool = False,
+        reviewed_markdown: Optional[str] = None,
+        reviewed_semantic_index: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Merge every loser INTO the survivor. Same-type enforced. Loser name
         variants (stem + SI name + aliases) become survivor aliases so old
@@ -267,6 +269,57 @@ class ManagementAgent:
 
             if not losers:
                 raise ManagementError("no loser entities to merge (all identical to survivor?)")
+
+            # ── REVIEWED COMMIT ──────────────────────────────────────────────
+            # The client already ran dry_run=true (one LLM merge) and the user
+            # reviewed/edited the returned markdown. Commit THAT body verbatim —
+            # no second LLM call. Loser aliases are still forced in (otherwise
+            # the writer re-creates the loser on old spellings), and loser cues
+            # are unioned into the SEMANTIC INDEX so nothing is dropped even if
+            # the user's edit trimmed the body.
+            if reviewed_markdown and reviewed_markdown.strip() and not dry_run:
+                survivor = self._load_entity(surv_abs)
+                si = dict(reviewed_semantic_index or survivor["semantic_index"] or {})
+                merged_aliases: List[str] = []
+                for key in ("aliases", "hard_cues", "soft_cues", "emotional_cues", "related_entities"):
+                    si[key] = list(si.get(key) or [])
+                for l_abs, _, _ in losers:
+                    loser = self._load_entity(l_abs)
+                    lsi = loser["semantic_index"] or {}
+                    for key in ("hard_cues", "soft_cues", "emotional_cues", "related_entities"):
+                        si[key] = list(dict.fromkeys((si.get(key) or []) + (lsi.get(key) or [])))
+                    merged_aliases.extend(_dedupe.loser_name_variants(loser))
+                si["aliases"] = list(dict.fromkeys((si.get("aliases") or []) + merged_aliases))
+
+                body = strip_legacy_semantic_index(reviewed_markdown).strip() + "\n"
+                full = _shared.write_with_semantic_index(body, normalize_semantic_index(si))
+                full = _dedupe._ensure_aliases(full, sorted(set(merged_aliases)))
+                if context:
+                    full = _append_user_context(full, context, "merge")
+
+                surv_abs.write_text(full, encoding="utf-8")
+                for l_abs, _, _ in losers:
+                    repo.git.rm(str(l_abs.relative_to(self.repo_path)))
+                repo.git.add(str(surv_abs.relative_to(self.repo_path)))
+                commit = self._commit(
+                    repo,
+                    f"manage(merge): {surv_abs.stem} ← {', '.join(a.stem for a, _, _ in losers)} (reviewed)",
+                )
+                index_commit = self._rebuild_index(repo)
+                self.logger.info(
+                    "MANAGE_MERGE_REVIEWED: survivor=%s losers=%d llm=skipped",
+                    survivor_path, len(losers),
+                )
+                return {
+                    "status": "ok",
+                    "tool": "merge",
+                    "commits": [commit] + ([index_commit] if index_commit else []),
+                    "survivor_path": survivor_path,
+                    "losers_merged": [lp for _, lp, _ in losers],
+                    "aliases_added": sorted(set(merged_aliases)),
+                    "reviewed": True,
+                    "summary": f"Merged {len(losers)} entit(y/ies) into {surv_abs.stem} (user-reviewed).",
+                }
 
             survivor = self._load_entity(surv_abs)
             previews: List[Dict[str, Any]] = []
@@ -308,6 +361,9 @@ class ManagementAgent:
                     "dry_run": True,
                     "previews": previews,
                     "final_markdown": strip_legacy_semantic_index(merged_content),
+                    # Round-tripped by the client on the reviewed commit so the
+                    # curated SI survives without a second LLM call.
+                    "semantic_index": _shared.extract_semantic_index(merged_content) or {},
                 }
 
             surv_abs.write_text(

@@ -417,12 +417,18 @@ class DiffMemory:
 
     def manage_merge(self, survivor_path: str, loser_paths: List[str],
                      strategy: str = "llm", context: Optional[str] = None,
-                     dry_run: bool = False) -> Dict[str, Any]:
-        """User-forced same-type merge (no LLM judge — the user IS the judge)."""
+                     dry_run: bool = False,
+                     reviewed_markdown: Optional[str] = None,
+                     reviewed_semantic_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """User-forced same-type merge (no LLM judge — the user IS the judge).
+        reviewed_markdown = commit the dry-run preview (possibly user-edited)
+        verbatim, skipping the second LLM call."""
         if not self.is_onboarded():
             raise ValueError(f"User {self.user_id} has not been onboarded.")
         return self._manager().manage_merge(
-            survivor_path, loser_paths, strategy=strategy, context=context, dry_run=dry_run
+            survivor_path, loser_paths, strategy=strategy, context=context, dry_run=dry_run,
+            reviewed_markdown=reviewed_markdown,
+            reviewed_semantic_index=reviewed_semantic_index,
         )
 
     def manage_move(self, paths: List[str], to_type: str,

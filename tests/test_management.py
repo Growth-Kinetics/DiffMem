@@ -430,3 +430,40 @@ def test_http_cross_type_merge_maps_to_400(monkeypatch, tmp_path):
     })
     assert r.status_code == 400, r.text
     assert "cross-type" in r.json()["detail"]
+
+
+# ── REVIEWED COMMIT (dry-run preview → user edit → commit, no 2nd LLM) ───────
+
+
+def test_merge_reviewed_markdown_commits_verbatim_no_llm(tmp_path: Path):
+    wt = build_worktree(tmp_path)
+    _seed_two_mayas(wt)
+    llm = FakeLLM()  # NO scripted responses — any LLM call would yield "" →
+    # deterministic fallback, which the verbatim assertions below would catch.
+    a = _agent(wt, llm)
+
+    reviewed = "# Person: Maya Chen\n\n## Role\nVP of Technology at Acme.\n\nEDITED BY USER — keeps everything.\n"
+    result = a.manage_merge(
+        "memories/people/maya_chen.md",
+        ["memories/people/maya_b.md"],
+        context="Same person, spelling variant.",
+        reviewed_markdown=reviewed,
+        reviewed_semantic_index={
+            "name": "Maya Chen", "type": "human", "hard_cues": ["Acme"],
+        },
+    )
+
+    assert result["status"] == "ok"
+    assert result["reviewed"] is True
+    assert len(llm.calls) == 0  # the whole point: zero LLM calls on commit
+
+    # Survivor file contains the user's body VERBATIM + forced loser aliases
+    # + the user-context note; loser file is gone.
+    final = (wt / "memories" / "people" / "maya_chen.md").read_text(encoding="utf-8")
+    assert "EDITED BY USER — keeps everything." in final
+    assert "## Merged from maya_b" not in final  # deterministic fallback NOT used
+    si = extract_semantic_index(final) or {}
+    assert "maya_b" in (si.get("aliases") or [])
+    assert "Mai" in (si.get("aliases") or [])
+    assert "(merge): Same person, spelling variant." in final
+    assert not (wt / "memories" / "people" / "maya_b.md").exists()

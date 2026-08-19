@@ -4,7 +4,7 @@ import re
 import subprocess
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, status, Depends
@@ -116,6 +116,11 @@ class ManageMergeRequest(BaseModel):
     strategy: str = Field("llm", description="'llm' | 'deterministic' (concat fallback, no LLM)")
     context: Optional[str] = Field(None, description="Why-merged note → dated '## User Context' bullet")
     dry_run: bool = Field(False, description="Return merged previews without committing")
+    reviewed_markdown: Optional[str] = Field(
+        None, description="User-reviewed merged body (from the dry-run preview, possibly edited) "
+        "— commit verbatim, skip the second LLM call")
+    reviewed_semantic_index: Optional[Dict[str, Any]] = Field(
+        None, description="SEMANTIC INDEX from the preview (round-tripped; unioned with loser cues on commit)")
 
 
 class ManageMoveRequest(BaseModel):
@@ -839,6 +844,8 @@ async def manage_merge(user_id: str, request: ManageMergeRequest, authenticated:
         return memory.manage_merge(
             request.survivor_path, request.loser_paths,
             strategy=request.strategy, context=request.context, dry_run=False,
+            reviewed_markdown=request.reviewed_markdown,
+            reviewed_semantic_index=request.reviewed_semantic_index,
         )
 
     resp = await _submit_and_respond(
