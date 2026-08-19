@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "diffmem"
-version = "0.5.6"
+version = "0.5.7"
 description = "DiffMem: Differential Memory Backend - Git-based memory library for personal augmentation systems"
 authors = ["Growth Kinetics <contact@growthkinetics.com>"]
 homepage = "https://github.com/growthkinetics/diffmem"

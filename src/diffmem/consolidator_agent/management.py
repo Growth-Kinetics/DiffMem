@@ -217,8 +217,14 @@ class ManagementAgent:
         return repo.head.commit.hexsha
 
     def _rebuild_index(self, repo: git.Repo) -> Optional[str]:
+        # Management ops rebuild WITHOUT per-file git stats (repo=None) — the
+        # shared rebuild_master_index calls `git log` + `git rev-list` per
+        # entity file, which is ~2 subprocesses × 1000+ files = 30-120s on a
+        # large store. Management ops (merge/move/rename/etc.) need a FAST
+        # index refresh (the user is waiting at the UI); the next normal chat
+        # ingest's _rebuild_master_index (writer path) refreshes git stats.
         _shared.rebuild_master_index(
-            self.repo_path, self.user_id, repo=repo,
+            self.repo_path, self.user_id, repo=None,
             entity_dirs=self.ontology.entity_dirs(self.repo_path),
         )
         if repo.is_dirty(untracked_files=True):
