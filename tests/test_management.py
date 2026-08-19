@@ -467,3 +467,43 @@ def test_merge_reviewed_markdown_commits_verbatim_no_llm(tmp_path: Path):
     assert "Mai" in (si.get("aliases") or [])
     assert "(merge): Same person, spelling variant." in final
     assert not (wt / "memories" / "people" / "maya_b.md").exists()
+
+
+# ── NATIVE /entities ENDPOINT (replaces N paged run-command greps) ──────────
+
+
+def test_http_list_entities_returns_index_md_json(monkeypatch, tmp_path: Path):
+    from tests._fixtures import build_worktree, write_person
+    from diffmem.consolidator_agent._shared import rebuild_master_index
+    from diffmem.api import DiffMemory
+
+    wt = build_worktree(tmp_path)
+    write_person(wt, filename="maya.md", name="Maya", body="VP of Technology.",
+                 semantic={"memory_strength": 0.9, "number_of_edits": 9,
+                           "hard_cues": ["Acme"], "related_entities": ["alex"]})
+    # index.md is the catalog the endpoint reads directly.
+    rebuild_master_index(wt, "alex", repo=None, entity_dirs=[wt / "memories"])
+    memory = DiffMemory(str(wt), "alex", "dummy", "test-model")
+    client = _http_client(monkeypatch, tmp_path, memory)
+
+    r = client.get("/memory/alex/entities")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["count"] == 1
+    ent = body["entities"][0]
+    assert ent["name"] == "Maya"
+    assert ent["file"].endswith("maya.md")
+    assert "Acme" in (ent.get("hard_cues") or [])
+
+
+def test_http_list_entities_empty_when_no_index(monkeypatch, tmp_path: Path):
+    from tests._fixtures import build_worktree
+    from diffmem.api import DiffMemory
+
+    wt = build_worktree(tmp_path)
+    memory = DiffMemory(str(wt), "alex", "dummy", "test-model")
+    client = _http_client(monkeypatch, tmp_path, memory)
+    r = client.get("/memory/alex/entities")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok", "entities": [], "count": 0}

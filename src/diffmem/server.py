@@ -1,8 +1,10 @@
 import asyncio
 import os
 import re
+import json
 import subprocess
 import logging
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Set
 from datetime import datetime
@@ -491,6 +493,33 @@ async def get_context(user_id: str, request: ContextRequest, authenticated: bool
 
 
 # --- Read Endpoints ---
+
+@app.get("/memory/{user_id}/entities")
+async def list_entities(user_id: str, authenticated: bool = Depends(verify_api_key)):
+    """Bulk entity catalog straight from index.md — ONE in-process call
+    replacing the browser's N paged run-command greps. Returns the
+    strength-sorted SEMANTIC INDEX objects exactly as index.md stores them
+    (file/name/type/strength/memory_strength/aliases/hard_cues/last_update/
+    number_of_edits). No shell, no paging."""
+    memory = get_memory_instance(user_id, allow_unboarded=True)
+    idx = Path(memory.repo_path) / "index.md"
+    if not idx.exists():
+        return {"status": "ok", "entities": [], "count": 0}
+    entities: List[Dict[str, Any]] = []
+    try:
+        text = idx.read_text(encoding="utf-8")
+        for block in re.findall(r"```(.*?)```", text, re.DOTALL):
+            block = block.strip()
+            if block.startswith("{"):
+                try:
+                    obj = json.loads(block)
+                    if isinstance(obj, dict):
+                        entities.append(obj)
+                except json.JSONDecodeError:
+                    pass
+    except OSError:
+        pass
+    return {"status": "ok", "entities": entities, "count": len(entities)}
 
 @app.get("/memory/{user_id}/user-entity")
 async def get_user_entity(user_id: str, authenticated: bool = Depends(verify_api_key)):
