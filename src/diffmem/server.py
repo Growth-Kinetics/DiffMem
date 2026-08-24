@@ -367,6 +367,18 @@ async def onboard_user(user_id: str, request: OnboardUserRequest, authenticated:
                 "result": result,
                 "metadata": {"timestamp": datetime.now().isoformat()},
             }
+        if result.get("already_onboarded"):
+            # Idempotent onboard: the user exists, nothing to do — this is success,
+            # not failure. Returning 500 here caused a re-onboard loop (2026-08-24):
+            # callers that persist their diffmem id only on success never set it and
+            # re-called onboard on every subsequent turn.
+            return {
+                "status": "success",
+                "already_onboarded": True,
+                "message": f"User {user_id} already onboarded (idempotent no-op)",
+                "result": result,
+                "metadata": {"timestamp": datetime.now().isoformat()},
+            }
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Onboarding failed: {result.get('error', 'Unknown error')}",

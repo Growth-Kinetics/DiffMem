@@ -98,7 +98,14 @@ class DiffMemory:
         """Onboard a new user by creating initial directory structure and files."""
         if self.is_onboarded():
             return {
+                # Idempotency contract (2026-08-24 incident): a repeat onboard is a
+                # successful no-op, not an error. Callers (annabelle) mint the user id
+                # deterministically and persist it ONLY on onboard success, so a 500
+                # here trapped them in a re-onboard loop — the branch existed and was
+                # pushed while every turn re-tried and failed. The server maps this
+                # flag to HTTP 200.
                 'success': False,
+                'already_onboarded': True,
                 'error': f'User {self.user_id} is already onboarded',
                 'user_id': self.user_id,
                 'timestamp': datetime.now().isoformat()
