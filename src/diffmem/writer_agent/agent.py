@@ -230,6 +230,7 @@ class WriterAgent:
         successful_creates = 0
         for result in results:
             if result['success']:
+                Path(result['file_path']).parent.mkdir(parents=True, exist_ok=True)
                 with open(result['file_path'], 'w', encoding='utf-8') as f:
                     f.write(result['content'])
                 self.logger.info(f"ENTITY_CREATED: Staged new file at {result['file_path']}")
@@ -550,6 +551,7 @@ class WriterAgent:
 
         for result in results:
             if result['success'] and result.get('modified_content'):
+                Path(result['file_path']).parent.mkdir(parents=True, exist_ok=True)
                 with open(result['file_path'], 'w', encoding='utf-8') as f:
                     f.write(result['modified_content'])
                 self.logger.info(f"FILE_UPDATED: Applied {result['updates_applied']}/{result['total_updates']} updates to {result['file_path'].name}")
@@ -836,6 +838,7 @@ class WriterAgent:
         successful_indexes = 0
         for result in results:
             if result['success']:
+                Path(result['file_path']).parent.mkdir(parents=True, exist_ok=True)
                 with open(result['file_path'], 'w', encoding='utf-8') as f:
                     f.write(result['content'])
                 self.logger.info(f"INDEX_UPDATED: Added semantic index to {result['file_path'].name}")
