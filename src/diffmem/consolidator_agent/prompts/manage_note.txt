@@ -1,0 +1,21 @@
+You are the DiffMem Memory Editor. A user has personally supplied additional context about this entity, in natural language. Weave it into the entity file so future sessions — and the memory writer agent that reads this file on every update — see and honor it.
+
+File: `{file_path}`
+
+**Current file content:**
+```markdown
+{file_content}
+```
+
+**User-provided context (added {today}):**
+"""
+{user_note}
+"""
+
+Rules:
+1. Integrate the user's context naturally into the most appropriate existing section (Background, Active Context, Notes, etc.). If no section fits, create one sensible new `##` section before any SEMANTIC INDEX block.
+2. Attribute the information to the user, dated: e.g. `- (2026-07-15, user) …`. Never present it as inferred from sessions.
+3. Resolve contradictions in FAVOR of the user's note — it is ground truth — but keep the prior framing visible as `(superseded)` if it carries context.
+4. Do NOT delete existing facts. Do NOT invent facts beyond the note.
+5. If the note introduces new hard cues (names, places, dates, roles), append them to `hard_cues`; new related entities → `related_entities`. Keep every other semantic-index field exactly as-is.
+6. Return the COMPLETE updated file content — frontmatter first (if present), then body. No fences, no commentary.

@@ -52,11 +52,38 @@ ontology-agnostic at runtime.
   `self.prompts_path / ...` directly.
 - All LLM calls are synchronous; the caller (`server.py`, executor) is responsible for
   running the agent in a thread pool off the uvicorn event loop.
+- **LLM semantic-index responses are normalized before persisting (v0.4.1).**
+  `_build_single_entity_index()` passes the LLM's build_index JSON through
+  `frontmatter.normalize_semantic_index()` before `merge_frontmatter()`. WHY:
+  models occasionally return nested lists for contractually-flat fields
+  (`hard_cues: ["a", ["b", "c"]]`), and those poisoned files crashed the
+  consolidator's joins/prefilters downstream with `TypeError` (see
+  `consolidator_agent/CONTEXT.md` for the full incident note). This is the
+  ingress guard; the consolidator's `extract_semantic_index` is the repair
+  guard for stores written before v0.4.1.
 
 ## Attention Guidance
 - For ontology-related issues: read `src/diffmem/ontology/loader.py` and the active
   ontology's `schema.json` first.
 - For write pipeline latency: `process_session()` → per-step LLM calls, most time is
   in `_create_new_entities` / `_update_existing_entities` (parallel but LLM-bound).
+- **Writer _rebuild_master_index now reads v2 frontmatter (v0.5.2).** The prior
+  implementation only parsed the legacy `## SEMANTIC INDEX` JSON block — every
+  v2 entity (YAML frontmatter) was silently skipped, leaving index.md empty.
+  The identify step then saw no existing entities → proposed creating
+  everything → the duplicate-spawning behavior the user originally reported.
+  Fixed by delegating to the shared `rebuild_master_index` (consolidator_agent/
+  _shared) which uses `extract_semantic_index` (handles BOTH formats). The
+  self-healing behavior (rebuilding SI for files that lack one) is preserved.
 - For master index staleness: `_rebuild_master_index()` scans `_entity_md_files()` and
   re-extracts SEMANTIC INDEX blocks — check that entity files have a `## SEMANTIC INDEX`.
+- For duplicate entity creation: `_resolve_entity_file_path()` resolves in tiers —
+  exact index lookup → normalized index key (`_normalize_name`: lowercase,
+  diacritics stripped, punctuation removed) → computed filename → fuzzy
+  (`SequenceMatcher` ≥ `FUZZY_NAME_THRESHOLD`=0.85 over index names+aliases,
+  plus stem containment ≥4 chars) → filesystem stem scan. Structured log lines:
+  `ENTITY_RESOLVED_INDEX` / `_COMPUTED` / `_NORMALIZED` / `_FUZZY` / `_NOT_FOUND`.
+  A resolve miss is what turns a transcript mention into a NEW file — before
+  v0.4.1 only the exact-lower + computed tiers existed and spelling variants
+  duplicated freely. The identify prompt (ontology side) instructs the LLM to
+  check aliases first; these tiers are the deterministic backstop.

@@ -10,7 +10,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+import json
 
 import yaml
 
@@ -90,3 +91,103 @@ def strip_legacy_semantic_index(content: str) -> str:
 def has_frontmatter(content: str) -> bool:
     fm, _ = parse_frontmatter(content)
     return fm is not None
+
+
+# --- semantic-index list normalization ----------------------------------------
+#
+# WHY THIS EXISTS: the semantic index (frontmatter on entity files) is produced
+# by LLMs. When asked for a JSON/YAML object whose fields are "a list of cue
+# strings", models occasionally return NESTED lists, e.g.
+#     hard_cues: ["a", "b", ["c", "d"]]
+# Every downstream consumer joins or hashes these fields assuming flat lists
+# of strings (",".join in the redistribute/link report builders, set() in the
+# dedupe prefilter) and crashes with TypeError — which took down ~80% of
+# consolidation runs in ChatBarry production before `redistribute`/`link` were
+# disabled there. Normalizing here, at the shared read/write choke points,
+# repairs already-poisoned stores (read side) and stops new nesting from
+# entering the store (write side) without touching each consumer.
+
+#: Fields of the semantic index that are contractually flat string lists.
+SI_LIST_FIELDS = (
+    "hard_cues",
+    "soft_cues",
+    "emotional_cues",
+    "aliases",
+    "related_entities",
+)
+
+#: Fields of the semantic index that are contractually scalar STRINGS.
+#: LLMs occasionally return lists here too (name: ["Maya", "Chen"]) — every
+#: downstream consumer calls .lower()/f-string/etc. on them, so a list poisons
+#: the writer lookup, the dedupe prefilter, and index.md. Coerced to a single
+#: joined string (order preserved) on read AND write.
+SI_STRING_FIELDS = (
+    "name",
+    "type",
+    "role",
+    "strength",
+)
+
+
+def coerce_str(value: Any) -> str:
+    """Coerce an LLM-produced scalar-contract value to str. Lists/tuples are
+    space-joined (order preserved, nested flattened first); other non-str
+    scalars are stringified; None/empty → ""."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple)):
+        return " ".join(flatten_str_list(value))
+    return str(value).strip()
+
+
+def flatten_str_list(values: Any) -> List[str]:
+    """Deep-flatten an arbitrarily nested list into flat `List[str]`.
+
+    Scalars inside the structure (e.g. a bare int cue) are stringified;
+    ``None`` entries and empty strings are dropped; duplicates are removed
+    preserving first-seen order. Non-list scalars at the top level are
+    treated as a single-element list (``"x" -> ["x"]``) — LLM outputs are
+    not trusted to keep the shape stable.
+    """
+    out: List[str] = []
+    seen: set = set()
+
+    def _walk(v: Any) -> None:
+        if v is None:
+            return
+        if isinstance(v, (list, tuple, set)):
+            for item in v:
+                _walk(item)
+            return
+        if isinstance(v, dict):
+            # A dict where a list was expected (another LLM shape slip):
+            # stringify deterministically so the value survives, flattens no further.
+            s = json.dumps(v, sort_keys=True, ensure_ascii=False)
+        else:
+            s = v if isinstance(v, str) else str(v)
+        s = s.strip()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+
+    _walk(values)
+    return out
+
+
+def normalize_semantic_index(si: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return `si` with every :data:`SI_LIST_FIELDS` entry flattened to a flat
+    string list and every :data:`SI_STRING_FIELDS` entry coerced to a string
+    (see module notes for why). Mutates and returns the same dict for in-place
+    callers; non-dict input is replaced with an empty dict. Unknown fields are
+    passed through untouched."""
+    if not isinstance(si, dict):
+        return {}
+    for field in SI_LIST_FIELDS:
+        if field in si:
+            si[field] = flatten_str_list(si[field])
+    for field in SI_STRING_FIELDS:
+        if field in si:
+            si[field] = coerce_str(si[field])
+    return si

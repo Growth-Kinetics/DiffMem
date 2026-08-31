@@ -80,6 +80,22 @@ invoked explicitly via `consolidate(tools=["reabsorb"])`. Routine
 - **Survivor = higher memory_strength.** Loser's filename is preserved as an
   `alias` in the survivor's SEMANTIC INDEX so writer-agent recognition catches
   it on future sessions.
+- **Merge propagation = ALL loser name variants (v0.4.1+).** Not just the
+  loser's file stem — its SEMANTIC INDEX `name` AND every alias land in the
+  survivor's aliases (`_dedupe.loser_name_variants` + `_ensure_aliases`).
+  This is the alias-redirect trick: any old spelling resolves to the survivor
+  via the writer's normalized/fuzzy index lookup, so the loser is never
+  re-created by later sessions. The LLM merge payload may omit them; the
+  propagation layer adds them regardless of what the LLM returned.
+- **Prefilter surfaces, the judge decides (v0.4.1+).** `find_candidate_pairs`
+  uses ANY-ONE-signal corroboration (name similarity ≥0.8 OR stem containment
+  OR ≥2 shared related_entities OR ≥3 shared hard_cues) — the name gate is no
+  longer a hard precondition. WHY: nickname-level variants of the same person
+  ("Maya Chen" vs "Maya B.", ratio 0.63) previously could never surface even
+  with full corroboration, so duplicates accumulated. The LLM judge
+  (same_entity=true AND confidence=high) remains the sole merge arbiter;
+  corroborated-but-different pairs surface and get rejected (encoded in the
+  e2e scripted-judge fixture).
 - **No coupling to writer-agent internals.** Where helpers are needed
   (e.g. fuzzy text matching, index rebuilding), prefer extracting to a shared
   module rather than reaching into `writer_agent.agent.WriterAgent` directly.
@@ -90,3 +106,66 @@ invoked explicitly via `consolidate(tools=["reabsorb"])`. Routine
   ontology requires custom consolidation behavior, add a `consolidator_prompts/`
   key to `schema.json` and extend the loader. Do not silently inherit from the
   personal ontology without documenting the decision.
+- **Semantic-index list fields are normalized at the read/write choke points
+  (v0.4.1).** LLMs occasionally emit NESTED lists for contractually-flat
+  string fields (`hard_cues: ["a", ["b", "c"]]`). Unnormalized, those shapes
+  crashed the consolidate chain with `TypeError` at three sites — the
+  `",".join` report builders in `_redistribute._candidates_block` and
+  `_link._cooccurrence_block`, and the `set(map(str.lower, ...))` prefilter in
+  `_dedupe._overlap` — which is why downstream consumers (ChatBarry) ran
+  dedupe-only for months. Fix is structural, not per-site:
+  `frontmatter.normalize_semantic_index()` (deep-flatten of
+  `hard_cues/soft_cues/emotional_cues/aliases/related_entities`) runs inside
+  `extract_semantic_index()` (READ choke point — repairs already-poisoned
+  stores on next pass) and inside `write_with_semantic_index()` (WRITE choke
+  point — no consolidator path can persist nesting). Regression suite:
+  `tests/test_semantic_index_normalization.py`, including reproduction of the
+  exact production crash shapes. Do NOT add defensive flattening at
+  individual consumers — the choke points are the single source of truth.
+- **Scalar-contract fields are coerced too (v0.5.1).** The same LLM failure
+  mode hits STRING-contract fields: `name: ["Maya","Chen"]` or `type:
+  ["human"]`. `.lower()` on those killed every rebuild ingest job on the VPS
+  (2026-08-18: HTTP 500 `AttributeError: 'list' object has no attribute
+  'lower'` — dedupe prefilter `_dedupe.py:75` and the writer's
+  `_load_master_index_lookup` / create-filename / resolve paths).
+  `normalize_semantic_index` now coerces `name/type/role/strength` via
+  `coerce_str` (lists → space-joined), AND the writer/dedupe crash sites
+  guard defensively (`_as_str`) because a stale index.md from a pre-fix
+  build can still carry poisoned entries until the next rebuild.
+
+## MANAGEMENT SURFACE (v0.5.0)
+
+`management.py` (this capability) exposes the entity-management engine the
+memory admin UI consumes: `manage/merge | move | rename | edit | alias |
+delete | link | add-note` + `merge-suggestions`. Routes live in `server.py`
+under `/memory/{uid}/manage/*`.
+
+**Why it exists:** every prior write path was either probabilistic (writer
+sessions) or policy-driven (consolidator dedupe). Users need exact-intent
+mutations — merge THESE two, move THAT to places, add THIS context — that
+still preserve store integrity (lock, index rebuild, commit trail, backup).
+`run-command` is an LLM-facing READ sandbox and must never mutate.
+
+Rules:
+- **All ops under ConsolidatorLock** + `manage(...)`-prefixed commits + master
+  index rebuild + post-commit backup (same as consolidate).
+- **Merge is user-forced, same-type only** (ManagementError → HTTP 400 on
+  cross-type; the UI must offer Move first). No LLM judge — the user IS the
+  judge. `dry_run` returns per-loser previews without committing. All loser
+  name variants (stem + SI name + aliases) become survivor aliases.
+- **`context` param (all mutating ops):** dated bullet under `## User Context`
+  in the affected file. The writer reads the full body at update time, so the
+  note steers future reprocessing. Git-only — no timeline entries.
+- **Path sandboxing (`_safe_rel`):** worktree-relative .md entity files under
+  ontology entity dirs only — never index.md, the root user entity, timeline/,
+  sessions/, repo_guide.md, traversal, or absolute paths. Both sides of the
+  containment check are resolved (macOS /var vs /private/var).
+- **LLM ops (merge, add-note) run as executor jobs** — inline executor only
+  (work-thunk); HatchetExecutor would mis-run the consolidate workflow, so
+  `_manage_guard` returns 501 there. Sync ops run via `asyncio.to_thread`.
+- **add-note** weaves user text as ground truth (dated, attributed, supersedes
+  contradictions) via `prompts/manage_note.txt`; responses pass through the
+  SI normalization choke points before persisting.
+- **merge-suggestions** = dedupe review queue: the relaxed prefilter, no
+  judge; `name_threshold` query param widens the net. Returns pairs with
+  similarity + shared cues/related for the UI wizard.

@@ -9,13 +9,53 @@ import git
 import json
 import logging
 import math
+import re
+import unicodedata
+from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from diffmem.ontology.loader import OntologyProfile, load_ontology
+
+# --- name normalization + fuzzy matching --------------------------------------
+#
+# WHY: the writer's entity resolution used to be exact-lowercase on index
+# names/aliases plus a computed filename. Spelling/nickname variants
+# ("Benjamin-Powell", "Benjamen Powell", "benjimin") missed and spawned
+# duplicate entity files — the #1 duplicate-source in ChatBarry production.
+# Two deterministic tiers fix it without LLM calls: key normalization
+# (punctuation/diacritics/whitespace fold) and a similarity tier for typos.
+
+
+def _normalize_name(name: str) -> str:
+    """Fold a name to a canonical lookup key: lowercase, diacritics stripped
+    (NFKD), all non-alphanumerics removed, whitespace collapsed.
+    "Jean-Pierre Ó Sé" → "jeanpierreose"."""
+    if not isinstance(name, str):
+        return ""
+    decomposed = unicodedata.normalize("NFKD", name)
+    ascii_folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    collapsed = re.sub(r"\s+", " ", ascii_folded.strip().lower())
+    return re.sub(r"[^a-z0-9 ]", "", collapsed).replace(" ", "")
+
+
+FUZZY_NAME_THRESHOLD = 0.85  # mirrors the dedupe prefilter's same-name notion
+
+
+def _as_str(value: Any) -> str:
+    """Coerce an LLM-produced name/type scalar to str. Lists are space-joined
+    (the LLM occasionally returns e.g. name: ["Maya", "Chen"]; calling .lower()
+    on it crashed ingest jobs on the VPS — 2026-08-18 rebuild incident)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(v).strip() for v in value if str(v).strip())
+    if value is None:
+        return ""
+    return str(value)
 
 class WriterAgent:
     """Orchestrates the process of updating memory files based on a session."""
@@ -122,6 +162,27 @@ class WriterAgent:
         with open(semantic_index_path, 'r', encoding='utf-8') as f:
             semantic_index = f.read()
 
+        # Truncate the index to stay under the model's context window. index.md
+        # is sorted by memory_strength (highest first), so we keep the top
+        # entries and drop the long tail. ~60K chars ≈ ~15K tokens, leaving
+        # ~110K for the memory_input + prompt overhead on a 128K-token model.
+        MAX_INDEX_CHARS = 60_000
+        if len(semantic_index) > MAX_INDEX_CHARS:
+            # Cut at a line boundary to avoid mid-JSON truncation.
+            cut = semantic_index.rfind('\n', 0, MAX_INDEX_CHARS)
+            if cut < MAX_INDEX_CHARS * 0.8:
+                cut = MAX_INDEX_CHARS  # fallback: hard cut
+            total = semantic_index.count('\n### ')
+            shown = semantic_index[:cut].count('\n### ')
+            semantic_index = (
+                semantic_index[:cut]
+                + f"\n--- (index truncated: showing top {shown} of {total} entities by memory strength) ---\n"
+            )
+            self.logger.info(
+                "INDEX_TRUNCATED: %d/%d entities (%d → %d chars)",
+                shown, total, len(semantic_index), cut,
+            )
+
         system_prompt = self._load_prompt("0_system")
         prompt_template = self._load_prompt("1_identify_entities")
         prompt = prompt_template.format(
@@ -136,6 +197,15 @@ class WriterAgent:
 
         entities_to_create = response.get('entities_to_create', [])
         entities_to_update = response.get('entities_to_update', [])
+        # Defensive coercion: LLMs occasionally return int counts instead of
+        # arrays (e.g. {"entities_to_create": 3} instead of [...]). Without
+        # this, len(int) raises TypeError and kills the ingest job.
+        if not isinstance(entities_to_create, list):
+            entities_to_create = []
+        if not isinstance(entities_to_update, list):
+            entities_to_update = []
+        response['entities_to_create'] = entities_to_create
+        response['entities_to_update'] = entities_to_update
 
         self.logger.info(f"Identified {len(entities_to_create)} new entities and {len(entities_to_update)} entities to update")
         return response
@@ -161,7 +231,7 @@ class WriterAgent:
             target_dir = self.repo_path / rel_folder
             target_dir.mkdir(parents=True, exist_ok=True)
 
-            file_name = entity['name'].lower().replace(' ', '_').replace('.', '') + '.md'
+            file_name = _as_str(entity['name']).lower().replace(' ', '_').replace('.', '') + '.md'
             new_file_path = target_dir / file_name
 
             return {
@@ -373,10 +443,48 @@ class WriterAgent:
                 'total_updates': 0
             }
 
+    def _fuzzy_index_match(
+        self, entity_name: str, index_lookup: Dict[str, str]
+    ) -> Optional[Tuple[float, str, str]]:
+        """Best fuzzy match of `entity_name` against the index lookup keys.
+
+        Returns (score, matched_key, file_path) for the best candidate with
+        similarity ≥ FUZZY_NAME_THRESHOLD (or a stem-containment match — the
+        same disambiguator heuristic the dedupe prefilter uses), else None.
+        Normalized comparison; deterministic; no LLM.
+        """
+        query = _normalize_name(entity_name)
+        if not query or not index_lookup:
+            return None
+        best: Optional[Tuple[float, str, str]] = None
+        for key, rel in index_lookup.items():
+            candidate = _normalize_name(key)
+            if not candidate:
+                continue
+            score = SequenceMatcher(None, query, candidate).ratio()
+            # Stem containment: one slug containing the other (e.g. the dedupe
+            # disambiguator case "maya" inside "maya_chen"). Both directions.
+            # Min-length 4 guard stops tiny fragments ("ai") matching everything.
+            if (
+                query != candidate
+                and min(len(query), len(candidate)) >= 4
+                and (query in candidate or candidate in query)
+            ):
+                score = max(score, FUZZY_NAME_THRESHOLD + 0.01)  # just over the bar
+            if score >= FUZZY_NAME_THRESHOLD and (best is None or score > best[0]):
+                best = (score, key, rel)
+        return best
+
     def _load_master_index_lookup(self) -> Dict[str, str]:
         """
         Loads the master index and creates a name->path lookup dict.
         Handles aliases and name variations.
+
+        Each entity's name and aliases are indexed under BOTH exact-lowercase
+        and normalized keys (see _normalize_name) so punctuation, casing,
+        diacritics, and whitespace variants resolve deterministically — the
+        exact-lower map alone let "Benjamin-Powell" / "benjamin powell" miss
+        and spawn duplicate files.
 
         Returns:
             Dict mapping entity names (and aliases) to file paths
@@ -411,12 +519,20 @@ class WriterAgent:
                     entity_data = ast.literal_eval(json_str)
 
                     if 'name' in entity_data and 'file' in entity_data:
-                        # Map primary name
-                        lookup[entity_data['name'].lower()] = entity_data['file']
+                        # Map primary name (exact-lower + normalized). Guarded:
+                        # a stale index.md can carry a list-valued name from a
+                        # pre-normalization build (VPS incident 2026-08-18).
+                        name_str = _as_str(entity_data['name'])
+                        if name_str:
+                            lookup[name_str.lower()] = entity_data['file']
+                            lookup[_normalize_name(name_str)] = entity_data['file']
 
-                        # Map all aliases
+                        # Map all aliases (exact-lower + normalized)
                         for alias in entity_data.get('aliases', []):
+                            if not isinstance(alias, str):
+                                continue  # tolerate malformed LLM output
                             lookup[alias.lower()] = entity_data['file']
+                            lookup[_normalize_name(alias)] = entity_data['file']
 
                 except Exception as e:
                     self.logger.debug(f"Could not parse entity in index: {e}")
@@ -440,6 +556,12 @@ class WriterAgent:
         """
         # Strategy 1: Look up in master index (handles aliases and exact names)
         index_lookup = self._load_master_index_lookup()
+        # Identify-LLM responses can carry non-str names (lists, numbers) —
+        # coerce once; every use below is a string op.
+        entity_name = _as_str(entity_name)
+        if not entity_name:
+            self.logger.warning("ENTITY_RESOLVE_SKIPPED: empty/coercion-failed name")
+            return None
         entity_name_lower = entity_name.lower()
 
         if entity_name_lower in index_lookup:
@@ -469,6 +591,34 @@ class WriterAgent:
         if entity_file.exists():
             self.logger.debug(f"ENTITY_RESOLVED_COMPUTED: {entity_name} → {entity_file}")
             return entity_file
+
+        # Strategy 2b: Normalized index lookup (punctuation / diacritics /
+        # whitespace variants map to the same key — deterministic, no LLM).
+        normalized = _normalize_name(entity_name)
+        if normalized in index_lookup:
+            index_path = self.user_path / index_lookup[normalized]
+            if index_path.exists():
+                self.logger.info(
+                    "ENTITY_RESOLVED_NORMALIZED: %s (norm=%s) → %s",
+                    entity_name, normalized, index_path,
+                )
+                return index_path
+
+        # Strategy 2c: Fuzzy match over index names + aliases. Catches typos
+        # and nicknames the exact/normalized tiers miss ("Benjamen" →
+        # "Benjamin", ratio 0.96). Threshold mirrors the dedupe prefilter's
+        # notion of "same name"; stem containment reuses the dedupe
+        # disambiguator heuristic (a slug that contains the other).
+        fuzzy_hit = self._fuzzy_index_match(entity_name, index_lookup)
+        if fuzzy_hit is not None:
+            score, matched_key, rel = fuzzy_hit
+            index_path = self.user_path / rel
+            if index_path.exists():
+                self.logger.info(
+                    "ENTITY_RESOLVED_FUZZY: %s ≈ %s (score=%.2f) → %s",
+                    entity_name, matched_key, score, index_path,
+                )
+                return index_path
 
         # Strategy 3: Fuzzy search across all ontology entity dirs
         for md_file in self._entity_md_files():
@@ -754,6 +904,15 @@ class WriterAgent:
             # Get semantic index JSON from LLM
             semantic_index_data = self._call_llm("", prompt, is_json=True)
 
+            # LLMs occasionally return nested lists for contractually-flat
+            # cue/alias/related fields (e.g. hard_cues: ["a", ["b", "c"]]).
+            # Normalize BEFORE persisting so poisoned shapes never enter the
+            # store — downstream consumers (consolidator joins, set() filters,
+            # master-index JSON) assume flat string lists and crash otherwise.
+            # See frontmatter.normalize_semantic_index for the full rationale.
+            from ..frontmatter import normalize_semantic_index
+            semantic_index_data = normalize_semantic_index(semantic_index_data)
+
             # `file` is a path computed at read time (scan_entities sets it);
             # never persist it into frontmatter.
             semantic_index_data.pop("file", None)
@@ -849,107 +1008,52 @@ class WriterAgent:
         self.logger.info(f"Successfully built {successful_indexes}/{len(file_paths)} indexes in parallel")
 
     def _rebuild_master_index(self):
-        """STEP 5: Rebuilds the master index.md file with all memory entities."""
+        """STEP 5: Rebuilds the master index.md file with all memory entities.
+
+        Delegates to the shared `rebuild_master_index` (consolidator_agent._shared)
+        which uses `extract_semantic_index` — handling BOTH v2 YAML frontmatter
+        AND the legacy `## SEMANTIC INDEX` JSON block. The prior manual parser
+        only read the legacy format, silently skipping every v2 entity and
+        leaving index.md empty — the root cause of the identify step's
+        duplicate-spawning behavior on entrepreneur-ontology stores.
+        """
+        from ..consolidator_agent._shared import extract_semantic_index, rebuild_master_index
+
         self.logger.info("STEP 5: Rebuilding master index.md...")
 
-        index_entries = []
-
-        # Scan all entity dirs defined by the active ontology
+        # Self-heal: find files without a parseable semantic index and rebuild
+        # them before generating the master index (preserves prior behavior).
+        files_needing_index = []
         for md_file in self._entity_md_files():
             if md_file.name == 'index.md':
                 continue
-
             try:
-                with open(md_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
+                content = md_file.read_text(encoding='utf-8')
+                if extract_semantic_index(content) is None:
+                    files_needing_index.append(md_file)
+            except OSError:
+                continue
+        if files_needing_index:
+            self.logger.info(
+                "MASTER_INDEX_HEAL: rebuilding semantic index for %d file(s)",
+                len(files_needing_index),
+            )
+            self._build_entity_indexes(files_needing_index)
 
-                # Look for SEMANTIC INDEX section
-                if '## SEMANTIC INDEX' in content:
-                    # Extract the JSON from the semantic index
-                    lines = content.split('\n')
-                    in_semantic_index = False
-                    json_lines = []
+        # Delegate to the shared rebuild — ontology-aware entity_dirs, both SI
+        # formats, git stats + memory strength augmentation.
+        try:
+            import git as gitlib
+            repo = gitlib.Repo(self.repo_path)
+        except Exception:
+            repo = None
 
-                    for line in lines:
-                        if line.strip().startswith('## SEMANTIC INDEX'):
-                            in_semantic_index = True
-                            continue
-                        elif in_semantic_index and line.strip().startswith('##'):
-                            break
-                        elif in_semantic_index and line.strip():
-                            json_lines.append(line.strip())
-
-                    if json_lines:
-                        # Parse the JSON and add git stats
-                        try:
-                            semantic_data = json.loads(''.join(json_lines))
-                            if len(semantic_data) < 2:
-                                self.logger.warning(f"Not enough semantic data found in {md_file}")
-                                self._build_entity_indexes([md_file])
-
-                            # Override file path with computed canonical path
-                            # This ensures consistency even if the embedded index has wrong paths
-                            canonical_path = self._get_relative_entity_path(md_file)
-                            llm_path = semantic_data.get('file', '')
-
-                            if llm_path != canonical_path:
-                                self.logger.debug(f"PATH_MISMATCH: {md_file.name} index has '{llm_path}', correcting to '{canonical_path}'")
-
-                            semantic_data['file'] = canonical_path
-
-                            git_stats = self._get_file_git_stats(md_file)
-
-                            # Add git metadata
-                            semantic_data['last_update'] = git_stats['last_update']
-                            semantic_data['number_of_edits'] = git_stats['number_of_edits']
-                            semantic_data['memory_strength'] = self._calculate_memory_strength(
-                                git_stats['number_of_edits'],
-                                git_stats['last_update']
-                            )
-
-                            index_entries.append(semantic_data)
-                        except json.JSONDecodeError as e:
-                            self.logger.warning(f"Could not parse semantic index in {md_file}: {e}")
-                else:
-                    self.logger.warning(f"No semantic index found in {md_file}")
-                    self._build_entity_indexes([md_file])
-            except Exception as e:
-                self.logger.warning(f"Could not process {md_file} for master index: {e}")
-
-        # Sort by memory strength (descending)
-        index_entries.sort(key=lambda x: x.get('memory_strength', 0), reverse=True)
-
-        # Generate master index content
-        master_index_content = f"""# Memory Index for {self.user_id}
-
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-Total entities: {len(index_entries)}
-
-## Entity Index (by memory strength)
-
-"""
-
-        for entry in index_entries:
-            name = entry.get('name', 'Unknown')
-            entity_type = entry.get('type', 'unknown')
-            strength = entry.get('strength', 'Low')
-            memory_strength = entry.get('memory_strength', 0)
-            file_path = entry.get('file', 'unknown')
-            hard_cues = ', '.join(entry.get('hard_cues', [])[:3])  # First 3 cues
-
-            master_index_content += f"""### {name} ({entity_type})
-- **File**: `{file_path}`
-- **Strength**: {strength} (Score: {memory_strength})
-```{entry}```
-
-"""
-
-        # Write master index
-        master_index_path = self.user_path / 'index.md'
-        with open(master_index_path, 'w', encoding='utf-8') as f:
-            f.write(master_index_content)
-
-        self.logger.info(f"MASTER_INDEX_REBUILT: Created {master_index_path} with {len(index_entries)} entities")
+        rebuild_master_index(
+            self.user_path,
+            self.user_id,
+            repo=repo,
+            entity_dirs=self.ontology.entity_dirs(self.repo_path),
+        )
 
     def _parse_commitment_metadata(self, file_path: Path) -> Optional[Dict[str, Any]]:
         """Best-effort parse of a commitment file's ## Metadata block + display name.

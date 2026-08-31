@@ -32,20 +32,40 @@ MIN_OVERLAP_HARD_CUES = 3
 
 
 def _name_similarity(a: str, b: str) -> float:
-    return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
+    # str() coercion: identify/LLM paths can hand through non-str names; a list
+    # here used to raise AttributeError (VPS rebuild incident 2026-08-18).
+    return difflib.SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio()
 
 
 def _overlap(a: List[str], b: List[str]) -> int:
     return len(set(map(str.lower, a or [])) & set(map(str.lower, b or [])))
 
 
-def find_candidate_pairs(entities: List[Dict[str, Any]]) -> List[Tuple[Dict, Dict]]:
+def find_candidate_pairs(
+    entities: List[Dict[str, Any]],
+    name_threshold: Optional[float] = None,
+) -> List[Tuple[Dict, Dict]]:
     """Pairs of entity dicts that pass the prefilter.
 
-    Rule: same `type`, name similarity ≥ 0.8, AND
-    (≥2 overlapping related_entities OR ≥3 overlapping hard_cues OR
-     one filename is the other's prefix/contains the other — disambiguator case).
+    `name_threshold` (optional) overrides NAME_SIMILARITY_THRESHOLD — used by
+    the management surface's merge-suggestions queue to widen the net.
+
+    Rule: same `type`, AND at least ONE corroborating signal:
+      - name similarity ≥ NAME_SIMILARITY_THRESHOLD, OR
+      - one filename stem contains the other (disambiguator case), OR
+      - ≥ MIN_OVERLAP_RELATED overlapping related_entities, OR
+      - ≥ MIN_OVERLAP_HARD_CUES overlapping hard_cues.
+
+    The name-similarity gate used to be a hard PREcondition applied before the
+    overlap counts — nickname-level variants of the same person ("Maya Chen"
+    vs "Maya B.", ratio 0.63) could never surface even with full cue/related
+    corroboration, so the writer kept minting duplicates. The prefilter only
+    bounds LLM cost; the judge (`same_entity=true AND confidence=high`)
+    remains the merge arbiter, so corroborated-but-differently-spelled pairs
+    now reach it.
     """
+    if name_threshold is None:
+        name_threshold = NAME_SIMILARITY_THRESHOLD
     pairs: List[Tuple[Dict, Dict]] = []
     n = len(entities)
     for i in range(n):
@@ -54,7 +74,7 @@ def find_candidate_pairs(entities: List[Dict[str, Any]]) -> List[Tuple[Dict, Dic
         for j in range(i + 1, n):
             b = entities[j]
             si_b = b["semantic_index"]
-            if (si_a.get("type") or "").lower() != (si_b.get("type") or "").lower():
+            if str(si_a.get("type") or "").lower() != str(si_b.get("type") or "").lower():
                 continue
             name_a = si_a.get("name", "") or a["file"].stem
             name_b = si_b.get("name", "") or b["file"].stem
@@ -64,16 +84,19 @@ def find_candidate_pairs(entities: List[Dict[str, Any]]) -> List[Tuple[Dict, Dic
             disambiguator_match = (
                 stem_a in stem_b or stem_b in stem_a
             ) and stem_a != stem_b
-            if sim < NAME_SIMILARITY_THRESHOLD and not disambiguator_match:
-                continue
+            # NOTE: no hard name gate — any ONE signal below surfaces the
+            # pair; the LLM judge remains the merge arbiter (see docstring).
             rel_overlap = _overlap(
                 si_a.get("related_entities", []), si_b.get("related_entities", [])
             )
             cue_overlap = _overlap(si_a.get("hard_cues", []), si_b.get("hard_cues", []))
+            # Any ONE corroborating signal surfaces the pair; the LLM judge
+            # (same_entity + high confidence) remains the merge arbiter.
             if (
-                rel_overlap >= MIN_OVERLAP_RELATED
-                or cue_overlap >= MIN_OVERLAP_HARD_CUES
+                sim >= name_threshold
                 or disambiguator_match
+                or rel_overlap >= MIN_OVERLAP_RELATED
+                or cue_overlap >= MIN_OVERLAP_HARD_CUES
             ):
                 pairs.append((a, b))
                 logger.info(
@@ -172,8 +195,9 @@ def merge_pair(
         logger.warning("DEDUPE_MERGE_LLM_FAIL: falling back to deterministic merge")
         merged = _deterministic_merge(survivor, loser)
     else:
-        # Ensure the alias from the loser is present in the SEMANTIC INDEX.
-        merged = _ensure_alias(merged, loser["file"].stem)
+        # All loser name variants (stem + name + aliases) redirect to the
+        # survivor — prevents the writer re-creating the loser on old spellings.
+        merged = _ensure_aliases(merged, loser_name_variants(loser))
     return merged
 
 
@@ -181,13 +205,25 @@ def _deterministic_merge(survivor: Dict[str, Any], loser: Dict[str, Any]) -> str
     """Fallback if the LLM returns nothing usable. Preserves both bodies,
     rebuilds a sane SEMANTIC INDEX from the union."""
     from ._shared import strip_semantic_index
+    from ..frontmatter import parse_frontmatter
 
-    body_s = strip_semantic_index(survivor["content"]).rstrip()
-    body_l = strip_semantic_index(loser["content"]).rstrip()
+    def _body(content: str) -> str:
+        # Strip BOTH the legacy SI block and frontmatter — the merged body is
+        # prose only; structured metadata is re-merged at write time
+        # (write_with_semantic_index). Embedding the loser's frontmatter in
+        # the body produced nested `---` blocks in merged files.
+        _, body = parse_frontmatter(strip_semantic_index(content))
+        return body.rstrip()
+
+    body_s = _body(survivor["content"])
+    body_l = _body(loser["content"])
     si_s = dict(survivor["semantic_index"])
     si_l = loser["semantic_index"]
 
-    aliases = list(dict.fromkeys((si_s.get("aliases") or []) + (si_l.get("aliases") or []) + [loser["file"].stem]))
+    # All loser name variants (stem + name + aliases) redirect to the survivor.
+    aliases = list(dict.fromkeys(
+        (si_s.get("aliases") or []) + (si_l.get("aliases") or []) + loser_name_variants(loser)
+    ))
     hard_cues = list(dict.fromkeys((si_s.get("hard_cues") or []) + (si_l.get("hard_cues") or [])))
     soft_cues = list(dict.fromkeys((si_s.get("soft_cues") or []) + (si_l.get("soft_cues") or [])))
     emo_cues = list(dict.fromkeys((si_s.get("emotional_cues") or []) + (si_l.get("emotional_cues") or [])))
@@ -203,19 +239,42 @@ def _deterministic_merge(survivor: Dict[str, Any], loser: Dict[str, Any]) -> str
     return write_with_semantic_index(body, si_s)
 
 
-def _ensure_alias(merged: str, loser_stem: str) -> str:
-    """If the merged content has a SEMANTIC INDEX block, make sure the loser's
-    stem is in `aliases`. If parsing fails or the block is missing, leave as-is
-    (caller may log)."""
+def loser_name_variants(loser: Dict[str, Any]) -> List[str]:
+    """Every name the LOSER was known by — stem, SEMANTIC INDEX name, and all
+    its aliases. All of these must land in the survivor's aliases after a
+    merge, or the writer's identify step will re-create the loser file the
+    next time a transcript uses one of those spellings (the alias-redirect
+    trick, same idea as Wikidata merge redirects)."""
+    si = loser.get("semantic_index") or {}
+    variants = [loser["file"].stem]
+    name = si.get("name")
+    if isinstance(name, str) and name.strip():
+        variants.append(name.strip())
+    for alias in si.get("aliases") or []:
+        if isinstance(alias, str) and alias.strip():
+            variants.append(alias.strip())
+    # Order-preserving dedupe (stem first).
+    return list(dict.fromkeys(v for v in variants if v))
+
+
+def _ensure_aliases(merged: str, names: List[str]) -> str:
+    """If the merged content has a SEMANTIC INDEX, make sure every name in
+    `names` is present in `aliases`. If parsing fails or the block is missing,
+    leave as-is (caller may log)."""
     from ._shared import extract_semantic_index, write_with_semantic_index, strip_semantic_index
 
     si = extract_semantic_index(merged)
     if si is None:
         return merged
-    aliases = si.get("aliases") or []
-    if loser_stem not in aliases:
-        aliases = list(aliases) + [loser_stem]
-        si["aliases"] = aliases
+    aliases = list(si.get("aliases") or [])
+    changed = False
+    for n in names:
+        if n not in aliases:
+            aliases.append(n)
+            changed = True
+    if not changed:
+        return merged
+    si["aliases"] = aliases
     return write_with_semantic_index(strip_semantic_index(merged), si)
 
 

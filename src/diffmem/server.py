@@ -1,10 +1,12 @@
 import asyncio
 import os
 import re
+import json
 import subprocess
 import logging
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, status, Depends
@@ -42,7 +44,10 @@ ALLOWED_ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "*")
 ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_RAW.split(",") if o.strip()]
 
 from .api import DiffMemory, onboard_new_user
+from . import __version__
 from .executor import ConsolidatePayload, TaskExecutor, WritePayload, build_executor
+from .executor.inline import InlineExecutor
+from .consolidator_agent.management import ManagementError
 from .ontology.loader import load_ontology
 from .repo_manager import RepoManager
 from .retrieval_agent import command_router
@@ -105,6 +110,56 @@ class OnboardUserRequest(BaseModel):
 
 class RunCommandRequest(BaseModel):
     command: str = Field(..., description="Sandboxed shell command to execute")
+
+
+class ManageMergeRequest(BaseModel):
+    survivor_path: str = Field(..., description="Entity kept after the merge")
+    loser_paths: List[str] = Field(..., description="Entities folded into the survivor (same type only)")
+    strategy: str = Field("llm", description="'llm' | 'deterministic' (concat fallback, no LLM)")
+    context: Optional[str] = Field(None, description="Why-merged note → dated '## User Context' bullet")
+    dry_run: bool = Field(False, description="Return merged previews without committing")
+    reviewed_markdown: Optional[str] = Field(
+        None, description="User-reviewed merged body (from the dry-run preview, possibly edited) "
+        "— commit verbatim, skip the second LLM call")
+    reviewed_semantic_index: Optional[Dict[str, Any]] = Field(
+        None, description="SEMANTIC INDEX from the preview (round-tripped; unioned with loser cues on commit)")
+
+
+class ManageMoveRequest(BaseModel):
+    paths: List[str] = Field(..., description="Entity files to move")
+    to_type: str = Field(..., description="Target ontology entity type (e.g. 'people', 'places')")
+    context: Optional[str] = Field(None, description="Why-moved note → dated '## User Context' bullet")
+
+
+class ManageRenameRequest(BaseModel):
+    path: str = Field(..., description="Entity file to rename")
+    new_name: str = Field(..., description="New natural name (slugified engine-side)")
+    context: Optional[str] = Field(None, description="Why-renamed note → dated '## User Context' bullet")
+
+
+class ManageEditRequest(BaseModel):
+    path: str = Field(..., description="Entity file to overwrite")
+    markdown: str = Field(..., description="Full replacement markdown (must keep a parseable semantic index)")
+
+
+class ManageAliasRequest(BaseModel):
+    path: str = Field(..., description="Entity file to alias")
+    aliases: List[str] = Field(..., description="Aliases to add (dedupe prevention)")
+
+
+class ManageLinkRequest(BaseModel):
+    path: str = Field(..., description="Entity file to link FROM")
+    target_path: str = Field(..., description="Entity file to link TO")
+    note: Optional[str] = Field(None, description="Optional relationship note")
+
+
+class ManageAddNoteRequest(BaseModel):
+    path: str = Field(..., description="Entity file to add context to")
+    text: str = Field(..., description="Natural-language context to weave in (ground truth)")
+
+
+class ManagePathRequest(BaseModel):
+    path: str = Field(..., description="Entity file (single-path ops: delete)")
 
 
 class ConsolidateRequest(BaseModel):
@@ -262,7 +317,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="DiffMem Server",
     description="Git-native memory server with agent-based retrieval",
-    version="0.4.0",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -450,6 +505,33 @@ async def get_context(user_id: str, request: ContextRequest, authenticated: bool
 
 
 # --- Read Endpoints ---
+
+@app.get("/memory/{user_id}/entities")
+async def list_entities(user_id: str, authenticated: bool = Depends(verify_api_key)):
+    """Bulk entity catalog straight from index.md — ONE in-process call
+    replacing the browser's N paged run-command greps. Returns the
+    strength-sorted SEMANTIC INDEX objects exactly as index.md stores them
+    (file/name/type/strength/memory_strength/aliases/hard_cues/last_update/
+    number_of_edits). No shell, no paging."""
+    memory = get_memory_instance(user_id, allow_unboarded=True)
+    idx = Path(memory.repo_path) / "index.md"
+    if not idx.exists():
+        return {"status": "ok", "entities": [], "count": 0}
+    entities: List[Dict[str, Any]] = []
+    try:
+        text = idx.read_text(encoding="utf-8")
+        for block in re.findall(r"```(.*?)```", text, re.DOTALL):
+            block = block.strip()
+            if block.startswith("{"):
+                try:
+                    obj = json.loads(block)
+                    if isinstance(obj, dict):
+                        entities.append(obj)
+                except json.JSONDecodeError:
+                    pass
+    except OSError:
+        pass
+    return {"status": "ok", "entities": entities, "count": len(entities)}
 
 @app.get("/memory/{user_id}/user-entity")
 async def get_user_entity(user_id: str, authenticated: bool = Depends(verify_api_key)):
@@ -724,6 +806,190 @@ async def consolidate(
     return resp
 
 
+# --- Management endpoints (memory admin surface) ------------------------------
+#
+# Integrity-preserving entity mutations for the memory browser UI. All ops run
+# under the consolidator lock, commit with a `manage(...)` prefix, and rebuild
+# the master index. See consolidator_agent/management.py.
+
+
+def _manage_work(work):
+    """Wrap an LLM manage op's work thunk: ManagementError (user input) is
+    returned as a `manage_error` field in the job result so the route can map
+    it to HTTP 400 — the executor's failure path would otherwise surface it as
+    an opaque 500."""
+    def wrapped():
+        try:
+            return work()
+        except ManagementError as e:
+            return {"status": "error", "manage_error": str(e)}
+    return wrapped
+
+
+def _manage_job_response(resp: dict) -> dict:
+    """Post-process a manage job response: map an embedded ManagementError to
+    HTTP 400; pass everything else through."""
+    if isinstance(resp, dict) and resp.get("manage_error"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(resp["manage_error"]))
+    return resp
+
+
+def _manage_guard(executor: TaskExecutor) -> None:
+    """LLM-backed manage ops (merge, add-note) execute via the executor's work
+    thunk — only the inline executor runs thunks. HatchetExecutor would silently
+    run the consolidate workflow instead, so refuse rather than misbehave."""
+    if not isinstance(executor, InlineExecutor):
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="LLM management operations require EXECUTOR=inline (the default). "
+                   "Sync management ops (move/rename/edit/alias/delete/link/suggestions) work on any executor.",
+        )
+
+
+async def _run_manage_sync(work, user_id: str, backup: bool = True) -> dict:
+    """Run a fast (no-LLM) management op in a worker thread; map
+    ManagementError → HTTP 400; fire backup when the op committed."""
+    try:
+        result = await asyncio.to_thread(work)
+    except ManagementError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    if backup and result.get("commits"):
+        _spawn_background(backup_user(user_id))
+    return result
+
+
+@app.post("/memory/{user_id}/manage/merge")
+async def manage_merge(user_id: str, request: ManageMergeRequest, authenticated: bool = Depends(verify_api_key)):
+    """User-forced same-type merge. LLM strategy (or deterministic) — runs as a
+    job (inline executor). dry_run returns previews without committing (sync)."""
+    memory = get_memory_instance(user_id)
+    executor: TaskExecutor = app.state.executor
+    _manage_guard(executor)
+
+    if request.dry_run:
+        # Preview: LLM still needed, but no commit — sync job; the UI awaits.
+
+        def work():
+            return memory.manage_merge(
+                request.survivor_path, request.loser_paths,
+                strategy=request.strategy, context=request.context, dry_run=True,
+            )
+
+        resp = await _submit_and_respond(
+            executor=executor, submit_fn=executor.submit_consolidate,
+            user_id=user_id, work=_manage_work(work), payload=None, callback_url=None, sync=True,
+        )
+        return _manage_job_response(resp)
+
+    def work():
+        return memory.manage_merge(
+            request.survivor_path, request.loser_paths,
+            strategy=request.strategy, context=request.context, dry_run=False,
+            reviewed_markdown=request.reviewed_markdown,
+            reviewed_semantic_index=request.reviewed_semantic_index,
+        )
+
+    resp = await _submit_and_respond(
+        executor=executor, submit_fn=executor.submit_consolidate,
+        user_id=user_id, work=_manage_work(work), payload=None, callback_url=None, sync=None,
+    )
+    resp = _manage_job_response(resp)
+    if resp.get("status") == "success":
+        _spawn_background(backup_user(user_id))
+    return resp
+
+
+@app.post("/memory/{user_id}/manage/add-note")
+async def manage_add_note(user_id: str, request: ManageAddNoteRequest, authenticated: bool = Depends(verify_api_key)):
+    """Weave user natural-language context into an entity body (LLM job)."""
+    memory = get_memory_instance(user_id)
+    executor: TaskExecutor = app.state.executor
+    _manage_guard(executor)
+
+    def work():
+        return {"manage": memory.manage_add_note(request.path, request.text)}
+
+    resp = await _submit_and_respond(
+        executor=executor, submit_fn=executor.submit_consolidate,
+        user_id=user_id, work=_manage_work(work), payload=None, callback_url=None, sync=None,
+    )
+    resp = _manage_job_response(resp)
+    if resp.get("status") == "success":
+        _spawn_background(backup_user(user_id))
+    return resp
+
+
+@app.post("/memory/{user_id}/manage/move")
+async def manage_move(user_id: str, request: ManageMoveRequest, authenticated: bool = Depends(verify_api_key)):
+    """Re-type entities (git mv + SI type rewrite). Sync, no LLM."""
+    memory = get_memory_instance(user_id)
+    return await _run_manage_sync(
+        lambda: memory.manage_move(request.paths, request.to_type, context=request.context),
+        user_id,
+    )
+
+
+@app.post("/memory/{user_id}/manage/rename")
+async def manage_rename(user_id: str, request: ManageRenameRequest, authenticated: bool = Depends(verify_api_key)):
+    """Rename an entity (git mv + SI name + H1; old stem → alias). Sync."""
+    memory = get_memory_instance(user_id)
+    return await _run_manage_sync(
+        lambda: memory.manage_rename(request.path, request.new_name, context=request.context),
+        user_id,
+    )
+
+
+@app.post("/memory/{user_id}/manage/edit")
+async def manage_edit(user_id: str, request: ManageEditRequest, authenticated: bool = Depends(verify_api_key)):
+    """Raw-markdown overwrite (expert mode). Sync."""
+    memory = get_memory_instance(user_id)
+    return await _run_manage_sync(
+        lambda: memory.manage_edit(request.path, request.markdown), user_id,
+    )
+
+
+@app.post("/memory/{user_id}/manage/alias")
+async def manage_alias(user_id: str, request: ManageAliasRequest, authenticated: bool = Depends(verify_api_key)):
+    """Add aliases to an entity's semantic index. Sync."""
+    memory = get_memory_instance(user_id)
+    return await _run_manage_sync(
+        lambda: memory.manage_alias(request.path, request.aliases), user_id,
+    )
+
+
+@app.post("/memory/{user_id}/manage/delete")
+async def manage_delete(user_id: str, request: ManagePathRequest, authenticated: bool = Depends(verify_api_key)):
+    """Delete an entity (git rm; recoverable from history). Sync."""
+    memory = get_memory_instance(user_id)
+    return await _run_manage_sync(
+        lambda: memory.manage_delete(request.path), user_id,
+    )
+
+
+@app.post("/memory/{user_id}/manage/link")
+async def manage_link(user_id: str, request: ManageLinkRequest, authenticated: bool = Depends(verify_api_key)):
+    """Bidirectional SI related_entities + wikilinks between two entities. Sync."""
+    memory = get_memory_instance(user_id)
+    return await _run_manage_sync(
+        lambda: memory.manage_link(request.path, request.target_path, note=request.note),
+        user_id,
+    )
+
+
+@app.get("/memory/{user_id}/manage/merge-suggestions")
+async def manage_merge_suggestions(
+    user_id: str,
+    name_threshold: Optional[float] = Query(None, description="Override name-similarity threshold (e.g. 0.7 to widen)"),
+    authenticated: bool = Depends(verify_api_key),
+):
+    """Dedupe review queue: relaxed-prefilter candidate pairs (no LLM, no
+    judging — the UI decides and calls manage/merge)."""
+    memory = get_memory_instance(user_id)
+    return await _run_manage_sync(
+        lambda: memory.merge_suggestions(name_threshold=name_threshold), user_id, backup=False,
+    )
+
+
 @app.post("/memory/{user_id}/process-commit-and-consolidate")
 async def process_commit_and_consolidate(
     user_id: str,
@@ -877,7 +1143,7 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": "0.4.0",
+        "version": __version__,
         "architecture": "git_native_agent",
         "active_contexts": len(memory_instances),
         "storage_backend": "local",
@@ -891,7 +1157,7 @@ async def health_check():
 async def root():
     return {
         "service": "DiffMem Server",
-        "version": "0.4.0",
+        "version": __version__,
         "description": "Git-native memory server with agent-based retrieval",
         "docs": "/docs",
         "health": "/health",

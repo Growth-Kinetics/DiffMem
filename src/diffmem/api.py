@@ -408,6 +408,87 @@ class DiffMemory:
 
     # UTILITY OPERATIONS
 
+    # --- management surface (memory admin: merge/move/rename/edit/alias/    
+    #     delete/link/add-note/merge-suggestions). See consolidator_agent/    
+    #     management.py — the ManagementAgent mirrors ConsolidatorAgent's DI.  
+
+    def _manager(self) -> "ManagementAgent":
+        from .consolidator_agent.management import ManagementAgent
+        return ManagementAgent(
+            str(self.repo_path),
+            self.user_id,
+            self.openrouter_api_key,
+            self.model,
+            ontology=self.ontology,
+        )
+
+    def manage_merge(self, survivor_path: str, loser_paths: List[str],
+                     strategy: str = "llm", context: Optional[str] = None,
+                     dry_run: bool = False,
+                     reviewed_markdown: Optional[str] = None,
+                     reviewed_semantic_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """User-forced same-type merge (no LLM judge — the user IS the judge).
+        reviewed_markdown = commit the dry-run preview (possibly user-edited)
+        verbatim, skipping the second LLM call."""
+        if not self.is_onboarded():
+            raise ValueError(f"User {self.user_id} has not been onboarded.")
+        return self._manager().manage_merge(
+            survivor_path, loser_paths, strategy=strategy, context=context, dry_run=dry_run,
+            reviewed_markdown=reviewed_markdown,
+            reviewed_semantic_index=reviewed_semantic_index,
+        )
+
+    def manage_move(self, paths: List[str], to_type: str,
+                    context: Optional[str] = None) -> Dict[str, Any]:
+        """Re-type entities: git mv to the ontology folder + SI type rewrite."""
+        if not self.is_onboarded():
+            raise ValueError(f"User {self.user_id} has not been onboarded.")
+        return self._manager().manage_move(paths, to_type, context=context)
+
+    def manage_rename(self, path: str, new_name: str,
+                      context: Optional[str] = None) -> Dict[str, Any]:
+        """Rename entity file + SI name + H1; old stem becomes an alias."""
+        if not self.is_onboarded():
+            raise ValueError(f"User {self.user_id} has not been onboarded.")
+        return self._manager().manage_rename(path, new_name, context=context)
+
+    def manage_edit(self, path: str, markdown: str) -> Dict[str, Any]:
+        """Raw-markdown overwrite (expert mode); SI must stay parseable."""
+        if not self.is_onboarded():
+            raise ValueError(f"User {self.user_id} has not been onboarded.")
+        return self._manager().manage_edit(path, markdown)
+
+    def manage_alias(self, path: str, aliases: List[str]) -> Dict[str, Any]:
+        """Add SI aliases (dedupe prevention)."""
+        if not self.is_onboarded():
+            raise ValueError(f"User {self.user_id} has not been onboarded.")
+        return self._manager().manage_alias(path, aliases)
+
+    def manage_delete(self, path: str) -> Dict[str, Any]:
+        """git rm an entity (recoverable via git history)."""
+        if not self.is_onboarded():
+            raise ValueError(f"User {self.user_id} has not been onboarded.")
+        return self._manager().manage_delete(path)
+
+    def manage_link(self, path: str, target_path: str,
+                    note: Optional[str] = None) -> Dict[str, Any]:
+        """Deterministic bidirectional SI related_entities + wikilinks."""
+        if not self.is_onboarded():
+            raise ValueError(f"User {self.user_id} has not been onboarded.")
+        return self._manager().manage_link(path, target_path, note=note)
+
+    def manage_add_note(self, path: str, text: str) -> Dict[str, Any]:
+        """Weave user natural-language context into the entity body (LLM)."""
+        if not self.is_onboarded():
+            raise ValueError(f"User {self.user_id} has not been onboarded.")
+        return self._manager().manage_add_note(path, text)
+
+    def merge_suggestions(self, name_threshold: Optional[float] = None) -> Dict[str, Any]:
+        """Dedupe review queue from the relaxed prefilter (no LLM)."""
+        if not self.is_onboarded():
+            raise ValueError(f"User {self.user_id} has not been onboarded.")
+        return self._manager().merge_suggestions(name_threshold=name_threshold)
+
     def get_repo_status(self) -> Dict[str, Any]:
         """Get current repository status and statistics."""
         if not self.is_onboarded():
