@@ -754,6 +754,15 @@ class WriterAgent:
             # Get semantic index JSON from LLM
             semantic_index_data = self._call_llm("", prompt, is_json=True)
 
+            # LLMs occasionally return nested lists for contractually-flat
+            # cue/alias/related fields (e.g. hard_cues: ["a", ["b", "c"]]).
+            # Normalize BEFORE persisting so poisoned shapes never enter the
+            # store — downstream consumers (consolidator joins, set() filters,
+            # master-index JSON) assume flat string lists and crash otherwise.
+            # See frontmatter.normalize_semantic_index for the full rationale.
+            from ..frontmatter import normalize_semantic_index
+            semantic_index_data = normalize_semantic_index(semantic_index_data)
+
             # `file` is a path computed at read time (scan_entities sets it);
             # never persist it into frontmatter.
             semantic_index_data.pop("file", None)
